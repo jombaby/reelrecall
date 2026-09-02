@@ -18,6 +18,7 @@ A private, database-backed catalog for Instagram, Facebook, and YouTube links sa
 - Neon Postgres persistence shared across devices
 - Private owner-password sign-in
 - Installable PWA for iPhone, iPad, Android, and desktop
+- Android share target: share Facebook and Instagram reel links straight into ReelRecall
 
 ## Run locally on macOS
 
@@ -33,6 +34,14 @@ Open http://localhost:3000.
 ## Import WhatsApp links
 
 On the iPhone, open WhatsApp, open the **Message yourself** chat, tap the contact/chat name, choose **Export Chat**, and select **Without Media**. AirDrop or save the resulting export to the Mac, unzip it, then choose the `.txt` file in the app.
+
+## Share reels directly from Android
+
+After ReelRecall is deployed and installed from Chrome on Android, it registers as a system share target. In Facebook or Instagram, open a reel, tap **Share**, choose the Android share sheet, and select **ReelRecall**. The app extracts the supported reel URL, skips duplicates, adds it to the library, runs the existing AI organization flow, and saves through the same Neon-backed library synchronization.
+
+If the ReelRecall session has expired, sign in when prompted; the pending shared reel is preserved and imported after authentication. If ReelRecall was already installed before this feature was deployed and it does not appear in the Android share sheet after Chrome has refreshed the app, uninstall the PWA and install it again once to refresh the operating-system share-target registration.
+
+Web Share Target is not supported by iPhone/iPad Safari PWAs, so iOS cannot register ReelRecall as a native share-sheet destination using PWA technology alone.
 
 ## Database and security setup
 

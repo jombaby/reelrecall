@@ -9,5 +9,5 @@ export default function PwaInstall(){
   function close(){sessionStorage.setItem("reelrecall:pwa-dismissed","true");setVisible(false)}
   async function install(){if(!prompt)return;await prompt.prompt();const choice=await prompt.userChoice;if(choice.outcome==="accepted")close()}
   if(!visible)return null;
-  return <aside className="pwa-install" aria-label="Install ReelRecall"><div><strong>Install ReelRecall</strong><small>{ios?"In Safari, tap Share, then Add to Home Screen.":"Use ReelRecall like an app from your Home Screen."}</small></div>{prompt?<button className="pwa-install-action" onClick={install}>Install</button>:null}<button className="pwa-install-close" onClick={close} aria-label="Dismiss">×</button></aside>
+  return <aside className="pwa-install" aria-label="Install ReelRecall"><div><strong>Install ReelRecall</strong><small>{ios?"In Safari, tap Share, then Add to Home Screen.":"Install ReelRecall, then share Facebook or Instagram reels directly to it."}</small></div>{prompt?<button className="pwa-install-action" onClick={install}>Install</button>:null}<button className="pwa-install-close" onClick={close} aria-label="Dismiss">×</button></aside>
 }
