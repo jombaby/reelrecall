@@ -73,3 +73,8 @@ Create an empty GitHub repository, then run the Git commands shown in `DEPLOY_MA
 - **Android:** open the deployed site in Chrome and use **Install app** or the in-app **Install** prompt.
 
 ReelRecall launches in a standalone app window. Loading synchronized records, playing social videos, retrieving thumbnails, and AI classification require an internet connection.
+
+
+## iPhone direct sharing
+
+iOS does not currently expose installed PWAs as native Web Share Targets. ReelRecall includes an Apple Shortcuts bridge at `/iphone-share`. In ReelRecall, choose **iPhone Share** in the header for the one-time setup instructions. After creating a Shortcut named **Save to ReelRecall**, Facebook or Instagram can share a reel to that Shortcut; the Shortcut opens `/iphone-share?url=<encoded reel URL>`, which forwards the link into the same duplicate-check, AI organization, and database sync flow used by Android PWA sharing.
