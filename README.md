@@ -6,7 +6,7 @@ ReelRecall can categorize and tag newly imported videos from available titles, c
 
 Manual category and tag edits are stored as locked choices. Automatic organization and later WhatsApp imports do not overwrite them.
 
-A private, browser-based catalog for recipe links saved in WhatsApp. It recognizes Instagram Reel, Facebook Reel, and `fb.watch` links from a WhatsApp chat export.
+A private, database-backed catalog for Instagram, Facebook, and YouTube links saved in WhatsApp.
 
 ## Features
 
@@ -15,7 +15,9 @@ A private, browser-based catalog for recipe links saved in WhatsApp. It recogniz
 - Skip duplicate links during imports
 - Export and restore a JSON backup
 - Responsive layout for iPhone, iPad, and desktop
-- No database or environment variables required
+- Neon Postgres persistence shared across devices
+- Private owner-password sign-in
+- Installable PWA for iPhone, iPad, Android, and desktop
 
 ## Run locally on macOS
 
@@ -32,9 +34,14 @@ Open http://localhost:3000.
 
 On the iPhone, open WhatsApp, open the **Message yourself** chat, tap the contact/chat name, choose **Export Chat**, and select **Without Media**. AirDrop or save the resulting export to the Mac, unzip it, then choose the `.txt` file in the app.
 
-## Important storage note
+## Database and security setup
 
-This version stores data in the current browser's local storage. Use **Export backup** regularly and before clearing browser data. Data is not automatically shared across devices.
+1. In Vercel, connect a Neon Postgres database to ReelRecall.
+2. Open Neon SQL Editor and run `db/schema.sql` once.
+3. Add `REELRECALL_PASSWORD` and `SESSION_SECRET` in Vercel Environment Variables. Generate the secret with `openssl rand -base64 48`.
+4. Keep `OPENAI_API_KEY` configured for automatic categories and tags.
+
+The first authenticated launch copies any existing browser-saved library into Neon when the database is empty. Afterwards Neon is authoritative and browser storage is retained as a local recovery cache. Duplicate URLs are normalized and removed before every database write; manual category and tag corrections remain part of the stored record.
 
 ## Deploy with Vercel CLI
 
@@ -56,4 +63,4 @@ Create an empty GitHub repository, then run the Git commands shown in `DEPLOY_MA
 - **iPhone/iPad:** open the deployed ReelRecall site in Safari, tap **Share**, choose **Add to Home Screen**, then tap **Add**.
 - **Android:** open the deployed site in Chrome and use **Install app** or the in-app **Install** prompt.
 
-ReelRecall launches in a standalone app window. Its interface can reopen when offline, and the saved catalog remains available from browser storage. Playing social videos, retrieving thumbnails, and AI classification still require an internet connection.
+ReelRecall launches in a standalone app window. Loading synchronized records, playing social videos, retrieving thumbnails, and AI classification require an internet connection.
