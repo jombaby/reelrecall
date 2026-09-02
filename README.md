@@ -1,52 +1,43 @@
-# Recipe Reel Library
+# ReelRecall
 
-## AI organization
+A private, database-backed library for Instagram, Facebook, and other links saved in WhatsApp.
 
-ReelRecall can categorize and tag newly imported videos from available titles, captions, and descriptions. Copy `.env.example` to `.env.local` and set `OPENAI_API_KEY`. For Vercel, add the same environment variable in Project Settings → Environment Variables and redeploy.
+## What is persisted
 
-Manual category and tag edits are stored as locked choices. Automatic organization and later WhatsApp imports do not overwrite them.
+Reels, WhatsApp timestamps, categories/subcategories, tags, notes, favorites, manual-edit protection, and Archive status are stored in Neon Postgres. Imported URLs are normalized and protected by a database unique constraint, so importing the same chat again does not create duplicates. Results are sorted newest-first using the WhatsApp message date when available.
 
-A private, browser-based catalog for recipe links saved in WhatsApp. It recognizes Instagram Reel, Facebook Reel, and `fb.watch` links from a WhatsApp chat export.
+The first time version 2 opens in a browser that contains version 1 data, it copies that browser data into Postgres. It leaves the original local copy intact as a fallback.
 
-## Features
-
-- Import a WhatsApp `_chat.txt` export without media
-- Add, edit, delete, search, categorize, tag, and favorite recipe links
-- Skip duplicate links during imports
-- Export and restore a JSON backup
-- Responsive layout for iPhone, iPad, and desktop
-- No database or environment variables required
-
-## Run locally on macOS
-
-Install [Node.js LTS](https://nodejs.org/) and then run:
+## 1. Install
 
 ```bash
 npm install
-npm run dev
 ```
 
-Open http://localhost:3000.
+## 2. Create the Neon database in Vercel
 
-## Import WhatsApp links
+1. Open the ReelRecall project in Vercel.
+2. Open **Storage**, choose **Create Database**, and select **Neon Postgres**.
+3. Connect it to ReelRecall. Vercel adds `DATABASE_URL` automatically.
+4. In the Neon SQL Editor, paste and run the complete contents of `db/schema.sql`.
 
-On the iPhone, open WhatsApp, open the **Message yourself** chat, tap the contact/chat name, choose **Export Chat**, and select **Without Media**. AirDrop or save the resulting export to the Mac, unzip it, then choose the `.txt` file in the app.
+## 3. Add security variables
 
-## Important storage note
+In **Vercel → ReelRecall → Settings → Environment Variables**, add:
 
-This version stores data in the current browser's local storage. Use **Export backup** regularly and before clearing browser data. Data is not automatically shared across devices.
+- `REELRECALL_PASSWORD`: the private password used to enter ReelRecall
+- `SESSION_SECRET`: generate a long random value on your Mac with `openssl rand -base64 48`
 
-## Deploy with Vercel CLI
+Apply both to Production, Preview, and Development. Never commit `.env.local` or real secrets to Git.
+
+For local development, copy `.env.example` to `.env.local` and enter the same three values. Then run `npm run dev`.
+
+## Git commands
 
 ```bash
-npm install
-npm run build
-npm install -g vercel
-vercel login
-vercel
-vercel --prod
+git add .
+git commit -m "Add persistent database and private sign-in"
+git push origin main
 ```
 
-## Deploy from GitHub
-
-Create an empty GitHub repository, then run the Git commands shown in `DEPLOY_MAC.md`. In Vercel, choose **Add New → Project**, import the repository, and click **Deploy**. Future pushes to `main` deploy automatically.
+After pushing, Vercel redeploys automatically. Facebook and Instagram videos remain on those platforms; Postgres stores their links and ReelRecall metadata.

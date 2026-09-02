@@ -1,0 +1,14 @@
+import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE, verifySession } from "@/lib/auth";
+
+export async function proxy(request: NextRequest) {
+  const path = request.nextUrl.pathname;
+  if (path.startsWith("/sign-in") || path.startsWith("/api/auth") || path.startsWith("/_next") || path === "/favicon.ico") return NextResponse.next();
+  if (!(await verifySession(request.cookies.get(SESSION_COOKIE)?.value))) {
+    if (path.startsWith("/api/")) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.redirect(new URL("/sign-in", request.url));
+  }
+  return NextResponse.next();
+}
+
+export const config = { matcher: ["/((?!_next/static|_next/image|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"] };
