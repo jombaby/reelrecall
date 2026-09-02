@@ -27,6 +27,8 @@ In **Vercel → ReelRecall → Settings → Environment Variables**, add:
 
 - `REELRECALL_PASSWORD`: the private password used to enter ReelRecall
 - `SESSION_SECRET`: generate a long random value on your Mac with `openssl rand -base64 48`
+- `OPENAI_API_KEY`: used only by the protected server route for automatic categories and tags
+- `OPENAI_MODEL`: optional; defaults to `gpt-4o-mini`
 
 Apply both to Production, Preview, and Development. Never commit `.env.local` or real secrets to Git.
 
@@ -41,3 +43,12 @@ git push origin main
 ```
 
 After pushing, Vercel redeploys automatically. Facebook and Instagram videos remain on those platforms; Postgres stores their links and ReelRecall metadata.
+
+## Install on a phone
+
+- **iPhone/iPad:** open the deployed site in Safari, tap **Share**, then **Add to Home Screen**.
+- **Android:** open the site in Chrome, open the menu, then tap **Install app** or **Add to Home screen**.
+
+ReelRecall launches as a standalone PWA. The interface shell can reopen offline, but database records and social videos require a connection.
+
+AI categorization runs after each import and can also be started with **Categorize with AI**. Database flags ensure subsequent imports and AI runs never overwrite categories or tags you edited manually. Inline playback uses the official Instagram/Facebook embed; posts that prohibit embedding show an external-platform fallback.

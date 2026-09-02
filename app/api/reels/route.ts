@@ -22,6 +22,7 @@ export async function POST(request: Request) {
   const entries: RecipeInput[] = Array.isArray(body) ? body : [body];
   let added = 0;
   let duplicates = 0;
+  const insertedIds: string[] = [];
   for (const item of entries) {
     if (!item.url) continue;
     const normalized = normalizeUrl(item.url);
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
         ${item.tags || []}, ${item.notes || ''}, ${item.favorite || false}, ${item.unavailable || false},
         ${item.categoryManual || false}, ${item.tagsManual || false}, ${item.messageAt || null}, ${item.addedAt || new Date().toISOString()})
       ON CONFLICT (owner_id, normalized_url) DO NOTHING RETURNING id`;
-    if (result.length) added++; else duplicates++;
+    if (result.length) { added++; insertedIds.push(String(result[0].id)); } else duplicates++;
   }
-  return NextResponse.json({ added, duplicates }, { status: added ? 201 : 200 });
+  return NextResponse.json({ added, duplicates, insertedIds }, { status: added ? 201 : 200 });
 }
