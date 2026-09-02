@@ -1,14 +1,22 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import PwaRegistration from "./pwa-registration";
+import PwaInstall from "./pwa-install";
 
-export const metadata: Metadata = { title:"ReelRecall", description:"Save it now. Recall it anytime.", applicationName:"ReelRecall", appleWebApp:{capable:true,statusBarStyle:"black-translucent",title:"ReelRecall"}, icons:{icon:"/icons/reelrecall.svg",apple:"/icons/reelrecall.svg"} };
-export const viewport = { themeColor:"#173d35", width:"device-width", initialScale:1, viewportFit:"cover" };
+export const metadata: Metadata = {
+  title: "ReelRecall",
+  description: "Save, organize, play, and rediscover videos from Instagram, Facebook, and YouTube.",
+  applicationName: "ReelRecall",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "ReelRecall" },
+  icons: { icon: "/icons/reelrecall.svg", apple: "/icons/reelrecall.svg" },
+};
+
+export const viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" as const, themeColor: "#173d35" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body><PwaRegistration />{children}</body>
+      <body><PwaInstall />{children}</body>
     </html>
   );
 }
