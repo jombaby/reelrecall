@@ -118,6 +118,13 @@ function generateWeeklyItems(videos:Video[]){
   return items;
 }
 
+
+function WeeklyMenuThumb({item}:{item:WeeklyMenuItem}){
+  const[thumbnail,setThumbnail]=useState<string|null>(null),[failed,setFailed]=useState(false);
+  useEffect(()=>{let active=true;setThumbnail(null);setFailed(false);fetch(`/api/thumbnail?url=${encodeURIComponent(item.url)}`).then(r=>r.ok?r.json():Promise.reject()).then((data:{thumbnail?:string})=>{if(active&&data.thumbnail)setThumbnail(data.thumbnail)}).catch(()=>{if(active)setFailed(true)});return()=>{active=false}},[item.url]);
+  return <div className={`weekly-thumb ${thumbnail&&!failed?"has-image":""}`}>{thumbnail&&!failed?<img src={thumbnail} alt="" onError={()=>setFailed(true)}/>:<div className={`weekly-thumb-fallback ${item.source.toLowerCase()}`}><span>▶</span><small>{item.source}</small></div>}<span className="weekly-thumb-play">▶</span></div>
+}
+
 function WeeklyMenuPlanner({videos,onClose}:{videos:Video[];onClose:()=>void}){
   const[weekStart,setWeekStart]=useState(currentMondayISO()),[items,setItems]=useState<WeeklyMenuItem[]>(()=>generateWeeklyItems(videos)),[savedMenus,setSavedMenus]=useState<SavedWeeklyMenu[]>([]),[activeSavedId,setActiveSavedId]=useState(""),[menuName,setMenuName]=useState(""),[status,setStatus]=useState(""),[loadingSaved,setLoadingSaved]=useState(true),[saving,setSaving]=useState(false);
   const foodCount=videos.filter(v=>v.status==="available"&&v.category.toLowerCase()==="food").length;
@@ -189,12 +196,21 @@ function WeeklyMenuPlanner({videos,onClose}:{videos:Video[];onClose:()=>void}){
     </div>
     {status?<div className="weekly-menu-status">{status}</div>:null}
     {!foodCount?<div className="weekly-menu-empty"><strong>No Food videos yet</strong><span>Classify or move videos into Food, then generate the weekly menu.</span></div>:
-    <div className="weekly-menu-scroll"><div className="weekly-calendar">
-      {WEEKLY_MENU_DAYS.map((day,dayIndex)=><section className="weekly-day" key={day}><header><strong>{day}</strong><small>{dayDateLabel(weekStart,dayIndex)}</small></header>
-        {WEEKLY_MENU_SLOTS.map(slot=>{const item=items.find(menuItem=>menuItem.day===day&&menuItem.slot===slot);return <div className="weekly-slot" key={slot}><div className="weekly-slot-label"><span>{slot}</span><button type="button" title={`Choose another ${slot}`} onClick={()=>reroll(day,slot)}>↻</button></div>
-          {item?<a className="weekly-mini-video" href={item.url} target="_blank" rel="noreferrer"><span className={`weekly-source ${item.source.toLowerCase()}`}>▶</span><span><strong>{item.title}</strong><small>{item.subcategory||item.source}</small></span></a>:<div className="weekly-no-video">No matching video</div>}
+    <div className="weekly-menu-scroll"><div className="weekly-calendar weekly-calendar-matrix">
+      <div className="weekly-calendar-header-row">
+        <div className="weekly-day-column-title"><span>Day</span></div>
+        {WEEKLY_MENU_SLOTS.map(slot=><div className="weekly-meal-column-title" key={slot}><span>{slot}</span></div>)}
+      </div>
+      {WEEKLY_MENU_DAYS.map((day,dayIndex)=><div className="weekly-calendar-row" key={day}>
+        <div className="weekly-day-cell"><strong>{day}</strong><small>{dayDateLabel(weekStart,dayIndex)}</small></div>
+        {WEEKLY_MENU_SLOTS.map(slot=>{const item=items.find(menuItem=>menuItem.day===day&&menuItem.slot===slot);return <div className="weekly-meal-cell" key={slot}>
+          <button className="weekly-reroll" type="button" title={`Choose another ${slot}`} aria-label={`Choose another ${slot} for ${day}`} onClick={()=>reroll(day,slot)}>↻</button>
+          {item?<a className="weekly-video-card" href={item.url} target="_blank" rel="noreferrer">
+            <WeeklyMenuThumb item={item}/>
+            <div className="weekly-video-card-copy"><strong>{item.title}</strong><small>{item.subcategory||item.source}</small></div>
+          </a>:<div className="weekly-no-video"><span>No matching</span><strong>{slot}</strong></div>}
         </div>})}
-      </section>)}
+      </div>)}
     </div></div>}
     <div className="weekly-menu-footer"><small>Click any mini tile to open its original reel. Use ↻ to replace only that meal.</small><button type="button" onClick={onClose}>Close</button></div>
   </div>
