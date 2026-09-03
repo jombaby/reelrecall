@@ -105,3 +105,8 @@ Food videos without a saved recipe include **Analyze Video**. The user explicitl
 ## Direct-link AI recipe analysis
 
 The **🎥 Analyze Video** action analyzes the Facebook or Instagram reel URL already saved on the tile; it no longer asks for a local video file. The server invokes Apify only when the user explicitly starts analysis, then sends extracted reel evidence (speech transcript, Instagram on-screen OCR, caption, and available preview image) to the existing OpenAI recipe model. Configure `APIFY_TOKEN` in Vercel. Optional actor overrides: `APIFY_INSTAGRAM_VIDEO_ACTOR`, `APIFY_FACEBOOK_VIDEO_ACTOR`, and `APIFY_FACEBOOK_TRANSCRIPT_ACTOR`.
+
+
+## Weekly Menu
+
+Use **Weekly Menu** from the ReelRecall header to randomly build a Monday–Sunday meal plan from available videos in the Food category. The calendar fills Breakfast, Lunch, Entrée, Snack and Drink slots, avoids repeats when enough matching videos exist, and supports rerolling one meal or regenerating the entire week. Saved menus are stored in the existing Neon-backed ReelRecall library and can be loaded, renamed by editing the menu name and saving changes, or deleted.

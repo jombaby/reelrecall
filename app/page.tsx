@@ -9,6 +9,10 @@ type Recipe = { title:string; ingredients:string[]; steps:string[]; notes:string
 type Video = { id:string; title:string; url:string; category:string; subcategory:string; tags:string[]; notes:string; favorite:boolean; source:Source; addedAt:string; status:Status; titleLocked:boolean; categoryLocked:boolean; tagsLocked:boolean; aiStatus:"pending"|"done"|"failed"; recipe?:Recipe|null };
 type VideoForm = { title:string; url:string; category:string; subcategory:string; tags:string; notes:string; status:Status };
 type Category = { id:string; name:string; subcategories:string[] };
+type WeeklyMenuSlot = "Breakfast"|"Lunch"|"Entrée"|"Snack"|"Drink";
+type WeeklyMenuItem = { day:string; slot:WeeklyMenuSlot; videoId:string; title:string; url:string; source:Source; subcategory:string };
+type SavedWeeklyMenu = { id:string; name:string; weekStart:string; items:WeeklyMenuItem[]; createdAt:string; updatedAt:string };
+
 type ReelAnalysisResult = { videoId:string; status:"success"|"partial"|"error"; source:Source; caption:string; transcript:string; onScreenText:string; thumbnail:string; evidence:string[]; recipe:Recipe|null; message:string; error:string; retrievedAt:string };
 
 const STORAGE_KEY="recipe-reel-library:v1", CATEGORY_KEY="video-library:categories:v1";
@@ -58,7 +62,146 @@ function VideoCard({video,playing,onPlay,onEdit,onDelete,onFavorite,onStatus,onR
     <div className="card-body"><p className="eyebrow">{video.category}{video.subcategory?` · ${video.subcategory}`:""}</p><h2>{video.title}</h2><p className="saved-date">Saved {new Date(video.addedAt).toLocaleString()}</p>{video.tags.length?<div className="tags">{video.tags.map(t=><span key={t}>{t}</span>)}</div>:null}{video.notes?<p className="notes">{video.notes}</p>:<p className="notes muted">Add a note about this video.</p>}<div className="card-actions">{video.category==="Food"&&!video.recipe?<button className="recipe-action video-analysis" onClick={onAnalyzeVideo} disabled={videoAnalyzing}>{videoAnalyzing?"Analyzing…":"🎥 Analyze Video"}</button>:null}{video.category==="Food"?<button className="recipe-action" onClick={onRecipe} disabled={recipeLoading}>{recipeLoading?"Getting recipe…":"🍳 Recipe"}</button>:null}<a href={video.url} target="_blank" rel="noreferrer" className="watch">{watchLabel}</a><button onClick={onEdit}>Edit</button><button onClick={onStatus}>{unavailable?"Restore":"Mark unavailable"}</button><button className="delete" onClick={onDelete}>Delete</button></div></div></article>
 }
 
+
+const WEEKLY_MENU_DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"] as const;
+const WEEKLY_MENU_SLOTS:WeeklyMenuSlot[]=["Breakfast","Lunch","Entrée","Snack","Drink"];
+
+function currentMondayISO(){
+  const d=new Date(),day=d.getDay(),offset=day===0?-6:1-day;
+  d.setHours(12,0,0,0);d.setDate(d.getDate()+offset);
+  return d.toISOString().slice(0,10);
+}
+function shiftWeekISO(iso:string,weeks:number){
+  const d=new Date(`${iso}T12:00:00`);d.setDate(d.getDate()+weeks*7);return d.toISOString().slice(0,10);
+}
+function weekTitle(iso:string){
+  const start=new Date(`${iso}T12:00:00`),end=new Date(start);end.setDate(end.getDate()+6);
+  const fmt=new Intl.DateTimeFormat(undefined,{month:"short",day:"numeric"});
+  return `${fmt.format(start)} – ${fmt.format(end)}, ${end.getFullYear()}`;
+}
+function dayDateLabel(weekStart:string,index:number){
+  const d=new Date(`${weekStart}T12:00:00`);d.setDate(d.getDate()+index);
+  return new Intl.DateTimeFormat(undefined,{month:"short",day:"numeric"}).format(d);
+}
+function slotText(video:Video){
+  return [video.subcategory,video.title,...video.tags].join(" ").toLowerCase().replace(/[éèê]/g,"e");
+}
+function matchesWeeklySlot(video:Video,slot:WeeklyMenuSlot){
+  const text=slotText(video);
+  if(slot==="Breakfast")return /\b(breakfast|brunch|pancake|waffle|omelet|oat|cereal)\b/.test(text);
+  if(slot==="Lunch")return /\b(lunch|soup|salad|sandwich|wrap|side|entree|main)\b/.test(text);
+  if(slot==="Entrée")return /\b(entree|main|dinner|supper|curry|pasta|chicken|beef|pork|rice|noodle)\b/.test(text);
+  if(slot==="Snack")return /\b(snack|snacks|appetizer|bite|finger food|dessert)\b/.test(text);
+  return /\b(drink|drinks|beverage|smoothie|juice|shake|coffee|tea|mocktail|cocktail)\b/.test(text);
+}
+function menuItemFromVideo(day:string,slot:WeeklyMenuSlot,video:Video):WeeklyMenuItem{
+  return{day,slot,videoId:video.id,title:video.title,url:video.url,source:video.source,subcategory:video.subcategory};
+}
+function matchingWeeklyVideos(videos:Video[],slot:WeeklyMenuSlot){
+  const food=videos.filter(v=>v.status==="available"&&v.category.toLowerCase()==="food");
+  let matches=food.filter(v=>matchesWeeklySlot(v,slot));
+  if(!matches.length&&slot==="Lunch")matches=food.filter(v=>/\b(entree|soup|salad|side)\b/.test(slotText(v)));
+  return matches;
+}
+function chooseWeeklyVideo(videos:Video[],slot:WeeklyMenuSlot,used:Set<string>){
+  const matches=matchingWeeklyVideos(videos,slot);
+  if(!matches.length)return null;
+  const unused=matches.filter(v=>!used.has(v.id)),pool=unused.length?unused:matches;
+  return pool[Math.floor(Math.random()*pool.length)]??null;
+}
+function generateWeeklyItems(videos:Video[]){
+  const used=new Set<string>(),items:WeeklyMenuItem[]=[];
+  for(const day of WEEKLY_MENU_DAYS)for(const slot of WEEKLY_MENU_SLOTS){
+    const video=chooseWeeklyVideo(videos,slot,used);
+    if(video){used.add(video.id);items.push(menuItemFromVideo(day,slot,video))}
+  }
+  return items;
+}
+
+function WeeklyMenuPlanner({videos,onClose}:{videos:Video[];onClose:()=>void}){
+  const[weekStart,setWeekStart]=useState(currentMondayISO()),[items,setItems]=useState<WeeklyMenuItem[]>(()=>generateWeeklyItems(videos)),[savedMenus,setSavedMenus]=useState<SavedWeeklyMenu[]>([]),[activeSavedId,setActiveSavedId]=useState(""),[menuName,setMenuName]=useState(""),[status,setStatus]=useState(""),[loadingSaved,setLoadingSaved]=useState(true),[saving,setSaving]=useState(false);
+  const foodCount=videos.filter(v=>v.status==="available"&&v.category.toLowerCase()==="food").length;
+
+  useEffect(()=>{let active=true;(async()=>{try{const response=await fetch("/api/weekly-menus",{cache:"no-store"});if(response.status===401){location.href="/sign-in";return}if(!response.ok)throw new Error();const data=await response.json() as {menus?:SavedWeeklyMenu[]};if(active)setSavedMenus(Array.isArray(data.menus)?data.menus:[])}catch{if(active)setStatus("Saved menus are temporarily unavailable.")}finally{if(active)setLoadingSaved(false)}})();return()=>{active=false}},[]);
+
+  function regenerate(){
+    setItems(generateWeeklyItems(videos));setActiveSavedId("");setMenuName("");setStatus(foodCount?"New weekly menu generated.":"Add Food videos before generating a weekly menu.");
+  }
+  function moveWeek(delta:number){
+    setWeekStart(current=>shiftWeekISO(current,delta));setItems(generateWeeklyItems(videos));setActiveSavedId("");setMenuName("");
+  }
+  function reroll(day:string,slot:WeeklyMenuSlot){
+    const current=items.find(item=>item.day===day&&item.slot===slot),used=new Set(items.filter(item=>item!==current).map(item=>item.videoId));
+    const video=chooseWeeklyVideo(videos,slot,used);
+    if(!video){setStatus(`No matching Food videos are available for ${slot}.`);return}
+    const next=menuItemFromVideo(day,slot,video);
+    setItems(existing=>[...existing.filter(item=>!(item.day===day&&item.slot===slot)),next]);
+    setActiveSavedId("");
+  }
+  async function persist(next:SavedWeeklyMenu[],message:string){
+    setSaving(true);
+    try{
+      const response=await fetch("/api/weekly-menus",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({menus:next})});
+      if(response.status===401){location.href="/sign-in";return false}
+      if(!response.ok)throw new Error();
+      setSavedMenus(next);setStatus(message);return true;
+    }catch{setStatus("Could not save the weekly menu. Please try again.");return false}
+    finally{setSaving(false)}
+  }
+  async function saveMenu(){
+    if(!items.length){setStatus("Generate a menu before saving.");return}
+    const now=new Date().toISOString(),defaultName=`Week of ${weekTitle(weekStart)}`,name=menuName.trim()||defaultName;
+    if(activeSavedId){
+      const next=savedMenus.map(menu=>menu.id===activeSavedId?{...menu,name,weekStart,items,updatedAt:now}:menu);
+      if(await persist(next,"Weekly menu updated."))setMenuName(name);
+      return;
+    }
+    const menu:SavedWeeklyMenu={id:crypto.randomUUID(),name,weekStart,items,createdAt:now,updatedAt:now};
+    if(await persist([menu,...savedMenus],"Weekly menu saved.")){setActiveSavedId(menu.id);setMenuName(name)}
+  }
+  function loadMenu(id:string){
+    const menu=savedMenus.find(item=>item.id===id);if(!menu)return;
+    setActiveSavedId(menu.id);setMenuName(menu.name);setWeekStart(menu.weekStart);setItems(menu.items);setStatus(`Loaded ${menu.name}.`);
+  }
+  async function deleteMenu(){
+    if(!activeSavedId)return;
+    const current=savedMenus.find(menu=>menu.id===activeSavedId);
+    if(!current||!confirm(`Delete saved menu "${current.name}"?`))return;
+    const next=savedMenus.filter(menu=>menu.id!==activeSavedId);
+    if(await persist(next,"Saved menu deleted.")){setActiveSavedId("");setMenuName("")}
+  }
+
+  return <div className="dialog weekly-menu-dialog">
+    <button className="dialog-close" onClick={onClose}>×</button>
+    <div className="weekly-menu-heading"><div><p className="kicker">WEEKLY MENU</p><h2>Plan the week from your saved Food reels</h2><p>Random selections use your Food videos and avoid repeats when enough matching videos are available.</p></div><div className="weekly-menu-count"><strong>{foodCount}</strong><span>Food videos</span></div></div>
+    <div className="weekly-menu-controls">
+      <div className="week-switcher"><button type="button" onClick={()=>moveWeek(-1)}>‹</button><strong>{weekTitle(weekStart)}</strong><button type="button" onClick={()=>moveWeek(1)}>›</button><button type="button" onClick={()=>{setWeekStart(currentMondayISO());setItems(generateWeeklyItems(videos));setActiveSavedId("");setMenuName("")}}>This week</button></div>
+      <button type="button" onClick={regenerate} disabled={!foodCount}>⤨ Regenerate Week</button>
+    </div>
+    <div className="weekly-menu-savebar">
+      <input value={menuName} onChange={e=>setMenuName(e.target.value)} placeholder={`Week of ${weekTitle(weekStart)}`} aria-label="Weekly menu name"/>
+      <button type="button" className="primary" onClick={()=>void saveMenu()} disabled={saving||!items.length}>{saving?"Saving…":activeSavedId?"Save Changes":"Save Menu"}</button>
+      <select value={activeSavedId} onChange={e=>e.target.value?loadMenu(e.target.value):(setActiveSavedId(""),setMenuName(""))} disabled={loadingSaved}>
+        <option value="">{loadingSaved?"Loading saved menus…":"Saved menus…"}</option>
+        {savedMenus.map(menu=><option key={menu.id} value={menu.id}>{menu.name}</option>)}
+      </select>
+      {activeSavedId?<button type="button" className="danger" onClick={()=>void deleteMenu()} disabled={saving}>Delete Saved</button>:null}
+    </div>
+    {status?<div className="weekly-menu-status">{status}</div>:null}
+    {!foodCount?<div className="weekly-menu-empty"><strong>No Food videos yet</strong><span>Classify or move videos into Food, then generate the weekly menu.</span></div>:
+    <div className="weekly-menu-scroll"><div className="weekly-calendar">
+      {WEEKLY_MENU_DAYS.map((day,dayIndex)=><section className="weekly-day" key={day}><header><strong>{day}</strong><small>{dayDateLabel(weekStart,dayIndex)}</small></header>
+        {WEEKLY_MENU_SLOTS.map(slot=>{const item=items.find(menuItem=>menuItem.day===day&&menuItem.slot===slot);return <div className="weekly-slot" key={slot}><div className="weekly-slot-label"><span>{slot}</span><button type="button" title={`Choose another ${slot}`} onClick={()=>reroll(day,slot)}>↻</button></div>
+          {item?<a className="weekly-mini-video" href={item.url} target="_blank" rel="noreferrer"><span className={`weekly-source ${item.source.toLowerCase()}`}>▶</span><span><strong>{item.title}</strong><small>{item.subcategory||item.source}</small></span></a>:<div className="weekly-no-video">No matching video</div>}
+        </div>})}
+      </section>)}
+    </div></div>}
+    <div className="weekly-menu-footer"><small>Click any mini tile to open its original reel. Use ↻ to replace only that meal.</small><button type="button" onClick={onClose}>Close</button></div>
+  </div>
+}
+
 export default function Home(){
+  const[weeklyMenuOpen,setWeeklyMenuOpen]=useState(false);
   const[videoAnalysisResult,setVideoAnalysisResult]=useState<ReelAnalysisResult|null>(null);
   const[videoAnalysisOpen,setVideoAnalysisOpen]=useState(false);
   const[videoAnalysisId,setVideoAnalysisId]=useState<string|null>(null),[videoAnalysisBusy,setVideoAnalysisBusy]=useState(false),[videoAnalysisStage,setVideoAnalysisStage]=useState("");
@@ -90,7 +233,7 @@ export default function Home(){
   async function clearAllVideos(){try{const response=await fetch("/api/library",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({videos:[],categories})});if(!response.ok)throw new Error();setVideos([]);localStorage.setItem(STORAGE_KEY,"[]");setPlayingId(null);setCategory("All");setSubcategory("");setFavorites(false);setShowArchive(false);setClearStep(0);setToast("All videos were cleared. Categories were preserved.")}catch{setToast("Could not clear the video library")}}
   const aiQueue=videos.filter(v=>v.status==="available"&&(((v.aiStatus==="pending"||v.aiStatus==="failed")&&(!v.categoryLocked||!v.tagsLocked||!v.titleLocked))||(!v.titleLocked&&isGenericTitle(v.title))));
   const recipeVideo=recipeVideoId?videos.find(v=>v.id===recipeVideoId)??null:null;
-  return <main className="app-shell"><aside className="sidebar"><a className="brand" href="#top"><Image className="brand-logo" src="/icons/reelreplay-mark.png" alt="" width={42} height={42} priority/><strong>ReelRecall</strong></a><nav className="side-menu"><p>Library</p><button className={category==="All"&&!favorites&&!showArchive?"active":""} onClick={()=>chooseCategory("All")}><span>All videos</span><b>{videos.filter(v=>v.status==="available").length}</b></button><button className={favorites?"active":""} onClick={()=>{setFavorites(true);setShowArchive(false);setExpandedCategory("");setCategory("All");setSubcategory("")}}><span>♥ Favorites</span><b>{videos.filter(v=>v.favorite&&v.status==="available").length}</b></button><button className={showArchive?"active":""} onClick={()=>{setShowArchive(true);setFavorites(false);setExpandedCategory("");setCategory("All");setSubcategory("")}}><span>▣ Archive</span><b>{videos.filter(v=>v.status==="unavailable").length}</b></button><div className="menu-divider"/>{categories.map(c=><div className="menu-group" key={c.id}><button className={category===c.name&&!favorites&&!showArchive?"active":""} onClick={()=>chooseCategory(c.name)} aria-expanded={expandedCategory===c.name}><span>{c.name}</span><b>{videos.filter(v=>v.category===c.name&&v.status==="available").length}</b></button>{expandedCategory===c.name&&c.subcategories.length?<div className="submenu">{c.subcategories.map(s=><button key={s} className={subcategory===s?"active":""} onClick={()=>setSubcategory(s)}>{s}</button>)}</div>:null}</div>)}</nav><button className="settings-link" onClick={()=>setSettingsOpen(true)}>⚙ <span>Settings</span></button></aside><div className="app-content"><header><div className="header-actions"><button className="quiet" onClick={()=>void autoCategorize(aiQueue)} disabled={aiRunning||!aiQueue.length}>{aiRunning?`Organizing ${aiProgress}…`:aiQueue.length?`✦ AI Organize (${aiQueue.length})`:"✓ AI Organized"}</button><button className="quiet" onClick={exportBackup} disabled={!videos.length}>Export backup</button><button className="quiet" onClick={async()=>{await fetch("/api/auth/logout",{method:"POST"});location.href="/sign-in"}}>Sign out</button><button className="primary" onClick={openNew}>＋ Add video</button></div></header>
+  return <main className="app-shell"><aside className="sidebar"><a className="brand" href="#top"><Image className="brand-logo" src="/icons/reelreplay-mark.png" alt="" width={42} height={42} priority/><strong>ReelRecall</strong></a><nav className="side-menu"><p>Library</p><button className={category==="All"&&!favorites&&!showArchive?"active":""} onClick={()=>chooseCategory("All")}><span>All videos</span><b>{videos.filter(v=>v.status==="available").length}</b></button><button className={favorites?"active":""} onClick={()=>{setFavorites(true);setShowArchive(false);setExpandedCategory("");setCategory("All");setSubcategory("")}}><span>♥ Favorites</span><b>{videos.filter(v=>v.favorite&&v.status==="available").length}</b></button><button className={showArchive?"active":""} onClick={()=>{setShowArchive(true);setFavorites(false);setExpandedCategory("");setCategory("All");setSubcategory("")}}><span>▣ Archive</span><b>{videos.filter(v=>v.status==="unavailable").length}</b></button><div className="menu-divider"/>{categories.map(c=><div className="menu-group" key={c.id}><button className={category===c.name&&!favorites&&!showArchive?"active":""} onClick={()=>chooseCategory(c.name)} aria-expanded={expandedCategory===c.name}><span>{c.name}</span><b>{videos.filter(v=>v.category===c.name&&v.status==="available").length}</b></button>{expandedCategory===c.name&&c.subcategories.length?<div className="submenu">{c.subcategories.map(s=><button key={s} className={subcategory===s?"active":""} onClick={()=>setSubcategory(s)}>{s}</button>)}</div>:null}</div>)}</nav><button className="settings-link" onClick={()=>setSettingsOpen(true)}>⚙ <span>Settings</span></button></aside><div className="app-content"><header><div className="header-actions"><button className="quiet" onClick={()=>setWeeklyMenuOpen(true)}>▦ Weekly Menu</button><button className="quiet" onClick={()=>void autoCategorize(aiQueue)} disabled={aiRunning||!aiQueue.length}>{aiRunning?`Organizing ${aiProgress}…`:aiQueue.length?`✦ AI Organize (${aiQueue.length})`:"✓ AI Organized"}</button><button className="quiet" onClick={exportBackup} disabled={!videos.length}>Export backup</button><button className="quiet" onClick={async()=>{await fetch("/api/auth/logout",{method:"POST"});location.href="/sign-in"}}>Sign out</button><button className="primary" onClick={openNew}>＋ Add video</button></div></header>
   <section className="intro compact-intro" id="top"><div><p className="kicker">REELRECALL</p><h1>Save it. <em>Find it.</em></h1></div></section><section className="toolbar"><label className="search"><span>⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search videos, notes, or tags"/></label></section><section className="results-head"><h2>{showArchive?"Archive":favorites?"Favorite videos":subcategory||category==="All"?subcategory||"All videos":category}</h2><span>{filtered.length} {filtered.length===1?"video":"videos"} · newest first</span></section>
   {videoAnalysisBusy&&videoAnalysisId?<div className="video-analysis-banner"><span className="spinner"/><div><strong>{videoAnalysisStage||"Analyzing reel…"}</strong><small>The result window will stay open when retrieval finishes.</small></div></div>:null}
   {!ready?<div className="empty">Loading…</div>:filtered.length?<section className="grid">{filtered.map(v=><VideoCard key={v.id} video={v} playing={playingId===v.id} onPlay={()=>setPlayingId(v.id)} onEdit={()=>openEdit(v)} onDelete={()=>setVideos(a=>a.filter(x=>x.id!==v.id))} onFavorite={()=>setVideos(a=>a.map(x=>x.id===v.id?{...x,favorite:!x.favorite}:x))} onStatus={()=>{setPlayingId(null);setVideos(a=>a.map(x=>x.id===v.id?{...x,status:x.status==="available"?"unavailable":"available"}:x));setToast(v.status==="available"?"Moved to Archive":"Restored to library")}} onRecipe={()=>void extractRecipe(v)} recipeLoading={recipeLoadingId===v.id} onAnalyzeVideo={()=>{if(videoAnalysisResult?.videoId===v.id&&!videoAnalysisBusy){setVideoAnalysisId(v.id);setVideoAnalysisOpen(true)}else void analyzeReelVideo(v)}} videoAnalyzing={videoAnalysisBusy&&videoAnalysisId===v.id} analysisReady={videoAnalysisResult?.videoId===v.id&&!videoAnalysisBusy}/>)}</section>:<section className="empty"><div>🎬</div><h2>{showArchive?"Archive is empty":videos.length?"No videos match":"Your ReelRecall library is ready"}</h2><p>{showArchive?"Videos marked unavailable will appear here.":"Import your WhatsApp chat to collect supported video links."}</p></section>}
@@ -101,5 +244,5 @@ export default function Home(){
   {settingsOpen?<div className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setSettingsOpen(false)}}><div className="dialog settings-dialog"><button className="dialog-close" onClick={()=>setSettingsOpen(false)}>×</button><p className="kicker">REELRECALL SETTINGS</p><h2>Settings</h2><section className="settings-section"><div><strong>Import from WhatsApp</strong><p>Add new links without duplicating videos or overwriting your corrections.</p></div><button className="primary" onClick={()=>fileRef.current?.click()}>Choose chat file</button><input ref={fileRef} type="file" accept=".txt,.json" onChange={e=>{void importFile(e);setSettingsOpen(false)}} hidden/></section><section className="settings-section"><div><strong>Categories and subcategories</strong><p>Add, rename, or remove the menu categories used for your videos.</p></div><button className="settings-action" onClick={()=>{setSettingsOpen(false);setManagerOpen(true)}}>Manage</button></section><section className="settings-section danger-zone"><div><strong>Admin</strong><p>Clear every active and archived video. Categories and settings are preserved.</p></div><button className="danger-button" disabled={!videos.length} onClick={()=>{setSettingsOpen(false);setClearStep(1)}}>Clear all videos</button></section></div></div>:null}
   {clearStep===1?<div className="dialog-backdrop"><div className="dialog confirm-dialog"><p className="kicker">FIRST CONFIRMATION</p><h2>Clear all videos?</h2><p>This will remove all {videos.length} active and archived videos from ReelRecall.</p><div className="confirm-actions"><button className="settings-action" onClick={()=>setClearStep(0)}>Cancel</button><button className="danger-button" onClick={()=>setClearStep(2)}>Continue</button></div></div></div>:null}
   {clearStep===2?<div className="dialog-backdrop"><div className="dialog confirm-dialog"><p className="kicker">FINAL CONFIRMATION</p><h2>This cannot be undone</h2><p>Your categories will remain, but every saved video will be permanently removed from the database and local cache.</p><div className="confirm-actions"><button className="settings-action" onClick={()=>setClearStep(0)}>Keep my videos</button><button className="danger-button" onClick={()=>void clearAllVideos()}>Permanently clear all</button></div></div></div>:null}
-  {managerOpen?<div className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setManagerOpen(false)}}><div className="dialog category-manager"><button className="dialog-close" onClick={()=>setManagerOpen(false)}>×</button><p className="kicker">ORGANIZE YOUR LIBRARY</p><h2>Manage categories</h2><div className="add-category"><input value={newCategory} onChange={e=>setNewCategory(e.target.value)} placeholder="New category"/><button className="primary" onClick={addCategory}>Add</button></div><div className="category-list">{categories.map(c=><section key={c.id}><div className="category-name"><input defaultValue={c.name} disabled={c.name==="Uncategorized"} onBlur={e=>renameCategory(c.id,e.target.value)}/>{c.name!=="Uncategorized"?<button className="danger" onClick={()=>deleteCategory(c.id)}>Delete</button>:null}</div><div className="subcategory-list">{c.subcategories.map(s=><span key={s}>{s}<button onClick={()=>deleteSub(c.name,s)}>×</button></span>)}</div><div className="add-sub"><input value={newSubs[c.id]??""} onChange={e=>setNewSubs({...newSubs,[c.id]:e.target.value})} placeholder="Add subcategory"/><button onClick={()=>addSub(c.id)}>Add</button></div></section>)}</div></div></div>:null}{toast?<div className="toast">{toast}</div>:null}</div></main>
+  {weeklyMenuOpen?<div className="dialog-backdrop weekly-menu-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setWeeklyMenuOpen(false)}}><WeeklyMenuPlanner videos={videos} onClose={()=>setWeeklyMenuOpen(false)}/></div>:null}{managerOpen?<div className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setManagerOpen(false)}}><div className="dialog category-manager"><button className="dialog-close" onClick={()=>setManagerOpen(false)}>×</button><p className="kicker">ORGANIZE YOUR LIBRARY</p><h2>Manage categories</h2><div className="add-category"><input value={newCategory} onChange={e=>setNewCategory(e.target.value)} placeholder="New category"/><button className="primary" onClick={addCategory}>Add</button></div><div className="category-list">{categories.map(c=><section key={c.id}><div className="category-name"><input defaultValue={c.name} disabled={c.name==="Uncategorized"} onBlur={e=>renameCategory(c.id,e.target.value)}/>{c.name!=="Uncategorized"?<button className="danger" onClick={()=>deleteCategory(c.id)}>Delete</button>:null}</div><div className="subcategory-list">{c.subcategories.map(s=><span key={s}>{s}<button onClick={()=>deleteSub(c.name,s)}>×</button></span>)}</div><div className="add-sub"><input value={newSubs[c.id]??""} onChange={e=>setNewSubs({...newSubs,[c.id]:e.target.value})} placeholder="Add subcategory"/><button onClick={()=>addSub(c.id)}>Add</button></div></section>)}</div></div></div>:null}{toast?<div className="toast">{toast}</div>:null}</div></main>
 }
