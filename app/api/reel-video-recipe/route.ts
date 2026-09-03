@@ -298,23 +298,9 @@ async function sampleLateRecipeSceneFrames(videoUrl:string){
         body:JSON.stringify({
           videoUrls:[videoUrl],
           maxVideos:1,
-
-          // Recipe ingredient cards can change text while keeping nearly the
-          // same background/brightness. Use FrameProbe's documented minimum
-          // scene threshold to detect subtle overlay/card changes.
-          sceneThreshold:0.10,
-
-          // Allow closely spaced ingredient cards to remain separate scenes.
-          minSceneSeconds:0.2,
-
-          // Preserve substantially more detected late recipe scenes.
-          maxKeyframes:60,
-
-          // Ingredient text is often small on vertical reels; retain more
-          // pixel detail for OpenAI vision.
-          keyframeLongEdge:1440,
-
-          includeKeyframes:true
+          // Lower than default 0.35 so ingredient-card / overlay changes
+          // are more likely to be treated as separate scenes.
+          sceneThreshold:0.22
         }),
         signal:AbortSignal.timeout(195000),
         cache:"no-store"
@@ -361,9 +347,8 @@ async function sampleLateRecipeSceneFrames(videoUrl:string){
       .sort((a,b)=>(a.startSeconds||0)-(b.startSeconds||0));
 
     // Recipe reels often introduce ingredients in a sequence after the hook.
-    // Keep more late-scene keyframes so a 10-15 item ingredient sequence is
-    // not truncated before OCR ever sees it.
-    const selected=scenes.slice(0,32);
+    // Keep up to 24 late-scene keyframes in chronological order.
+    const selected=scenes.slice(0,24);
     const frames:string[]=[];
 
     for(const scene of selected){
@@ -600,7 +585,7 @@ async function facebookEvidence(video:VideoInput){
   const frames=[
     ...standardFrames,
     ...lateSceneFrames
-  ].slice(0,44);
+  ].slice(0,36);
 
   if(!caption&&!transcript&&!frames.length){
     const detail=errors.filter(Boolean).join(" | ");
@@ -622,8 +607,8 @@ async function facebookEvidence(video:VideoInput){
       thumbnail?"Reel preview image":"",
       directVideoUrl?"Direct Facebook MP4":"",
       standardFrames.length?"Standard Facebook video frames for AI OCR":"",
-      lateSceneFrames.length?`Late recipe scene keyframes from 8s onward (${lateSceneFrames.length})`:"",
-      frames.length?`Sampled Facebook video frames for AI OCR (${frames.length})`:""
+      lateSceneFrames.length?"Late recipe scene keyframes from 8s onward":"",
+      frames.length?"Sampled Facebook video frames for AI OCR":""
     ].filter(Boolean)
   };
 }
@@ -631,7 +616,6 @@ async function facebookEvidence(video:VideoInput){
 
 // REELRECALL_EVIDENCE_PRESERVING_TWO_PASS_V9
 // REELRECALL_COMPLETE_INGREDIENT_OCR_V10
-// REELRECALL_MAX_RECIPE_SCENE_COVERAGE_V11
 type FrameOcrResult = {
   onScreenText:string;
 };
@@ -658,7 +642,6 @@ async function readFrameTextWithOpenAI(frames:string[]){
           "Extract every legible recipe line from every frame, especially ingredient name + quantity. "+
           "Do not stop after finding one ingredient. Do not summarize a group of ingredient cards. "+
           "If consecutive frames show different ingredients, all of those ingredient lines must appear in the output. "+
-          "Some frames may look visually almost identical except for the ingredient text. Treat changed text as a new ingredient even when the background, bowl, hands, or camera angle is unchanged. "+
           "Ingredient cards may show English on one line and Hindi or another translation underneath. "+
           "Preserve the English line independently. Preserve fractions and units such as ½ tbsp, ¼ cup, tsp, tbsp, g, kg, ml, cup. "+
           "Ignore only exact duplicate lines repeated in adjacent frames. Do not invent missing text."
@@ -914,9 +897,6 @@ export async function POST(request:NextRequest){
       }
       if(!media.evidence.includes("Complete ingredient OCR v10")){
         media.evidence.push("Complete ingredient OCR v10");
-      }
-      if(!media.evidence.includes("Maximum recipe scene coverage v11")){
-        media.evidence.push("Maximum recipe scene coverage v11");
       }
     }
 
