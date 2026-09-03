@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   try {
     const target = new URL(rawUrl);
     if (!["http:", "https:"].includes(target.protocol)) throw new Error("Unsupported URL");
-    const allowed = ["instagram.com", "www.instagram.com", "facebook.com", "www.facebook.com", "fb.watch"];
+    const allowed = ["instagram.com", "www.instagram.com", "facebook.com", "www.facebook.com", "m.facebook.com", "fb.watch"];
     if (!allowed.includes(target.hostname)) throw new Error("Unsupported host");
     const response = await fetch(target, { redirect: "follow", headers: { "User-Agent": "Mozilla/5.0 (compatible; RecipeReelLibrary/1.0)", "Accept-Language": "en-US,en;q=0.9" }, signal: AbortSignal.timeout(7000) });
     if (!response.ok) throw new Error("Metadata unavailable");

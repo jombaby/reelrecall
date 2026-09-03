@@ -78,3 +78,15 @@ ReelRecall launches in a standalone app window. Loading synchronized records, pl
 ## iPhone direct sharing
 
 iOS does not currently expose installed PWAs as native Web Share Targets. ReelRecall includes an Apple Shortcuts bridge at `/iphone-share`. In ReelRecall, choose **iPhone Share** in the header for the one-time setup instructions. After creating a Shortcut named **Save to ReelRecall**, Facebook or Instagram can share a reel to that Shortcut; the Shortcut opens `/iphone-share?url=<encoded reel URL>`, which forwards the link into the same duplicate-check, AI organization, and database sync flow used by Android PWA sharing.
+
+## Facebook hybrid playback
+
+Facebook playback now uses a conservative fallback chain instead of assuming an embed error means a reel was removed:
+
+1. ReelRecall asks Meta's tokenless Facebook oEmbed video endpoint whether the public reel/video is embeddable.
+2. If Meta returns an embed, ReelRecall renders it inline.
+3. If Meta rejects the embed but ReelRecall has a thumbnail, the thumbnail stays visible with a **Watch in Facebook** action.
+4. If no thumbnail is available, ReelRecall shows a neutral **This reel can't be played inline** card and a **Watch in Facebook** action.
+5. ReelRecall only uses the stronger **may no longer be available** wording for items the user explicitly marked unavailable; an oEmbed failure alone never changes a video's saved status.
+
+This avoids the misleading Facebook iframe message that can appear for login-, audience-, geographic-, age-, or embed-restricted content that is still valid in Facebook.
