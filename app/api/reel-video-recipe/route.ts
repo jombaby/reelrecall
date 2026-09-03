@@ -264,6 +264,133 @@ async function sampleVideoFrames(videoUrl:string){
   }
 }
 
+
+// REELRECALL_LATE_RECIPE_SCENE_SAMPLING_V8
+type SceneRecord = {
+  startSeconds?:number;
+  endSeconds?:number;
+  keyframeKey?:string;
+};
+
+type SceneSplitterRun = {
+  data?:{
+    defaultDatasetId?:string;
+    defaultKeyValueStoreId?:string;
+  }
+};
+
+async function sampleLateRecipeSceneFrames(videoUrl:string){
+  const token=process.env.APIFY_TOKEN;
+  if(!token||!videoUrl)return[] as string[];
+
+  const actor=
+    process.env.APIFY_VIDEO_SCENE_ACTOR||
+    "frameprobe/video-scene-splitter";
+
+  try{
+    const runResponse=await fetch(
+      `https://api.apify.com/v2/acts/${actorId(actor)}/runs?waitForFinish=180`,
+      {
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "Authorization":`Bearer ${token}`
+        },
+        body:JSON.stringify({
+          videoUrls:[videoUrl],
+          maxVideos:1,
+          // Lower than default 0.35 so ingredient-card / overlay changes
+          // are more likely to be treated as separate scenes.
+          sceneThreshold:0.22
+        }),
+        signal:AbortSignal.timeout(195000),
+        cache:"no-store"
+      }
+    );
+
+    if(!runResponse.ok){
+      console.warn(
+        "[facebook-late-scene-ocr]",
+        `Scene splitter failed (${runResponse.status})`
+      );
+      return[];
+    }
+
+    const run=await runResponse.json() as SceneSplitterRun;
+    const datasetId=run.data?.defaultDatasetId||"";
+    const storeId=run.data?.defaultKeyValueStoreId||"";
+    if(!datasetId||!storeId)return[];
+
+    const datasetResponse=await fetch(
+      `https://api.apify.com/v2/datasets/${datasetId}/items?clean=true&limit=1`,
+      {
+        headers:{Authorization:`Bearer ${token}`},
+        signal:AbortSignal.timeout(15000),
+        cache:"no-store"
+      }
+    );
+
+    if(!datasetResponse.ok)return[];
+
+    const rows=await datasetResponse.json() as ActorRow[];
+    const row=rows[0]||{};
+    const rawScenes=row["scenes"];
+
+    if(!Array.isArray(rawScenes))return[];
+
+    const scenes=(rawScenes as SceneRecord[])
+      .filter(scene=>
+        typeof scene.startSeconds==="number" &&
+        scene.startSeconds>=8 &&
+        typeof scene.keyframeKey==="string" &&
+        scene.keyframeKey.trim()
+      )
+      .sort((a,b)=>(a.startSeconds||0)-(b.startSeconds||0));
+
+    // Recipe reels often introduce ingredients in a sequence after the hook.
+    // Keep up to 24 late-scene keyframes in chronological order.
+    const selected=scenes.slice(0,24);
+    const frames:string[]=[];
+
+    for(const scene of selected){
+      const key=scene.keyframeKey?.trim();
+      if(!key)continue;
+
+      try{
+        const frameResponse=await fetch(
+          `https://api.apify.com/v2/key-value-stores/${storeId}/records/${encodeURIComponent(key)}`,
+          {
+            headers:{Authorization:`Bearer ${token}`},
+            signal:AbortSignal.timeout(15000),
+            cache:"no-store"
+          }
+        );
+
+        if(!frameResponse.ok)continue;
+
+        const contentType=
+          frameResponse.headers.get("content-type")||
+          "image/jpeg";
+
+        const bytes=Buffer.from(await frameResponse.arrayBuffer());
+        if(bytes.length>2500000)continue;
+
+        frames.push(
+          `data:${contentType};base64,${bytes.toString("base64")}`
+        );
+      }catch{}
+    }
+
+    return frames;
+  }catch(error){
+    console.warn(
+      "[facebook-late-scene-ocr]",
+      error instanceof Error?error.message:"late-scene extraction failed"
+    );
+    return[];
+  }
+}
+
 async function instagramEvidence(video:VideoInput){
   const actor=
     process.env.APIFY_INSTAGRAM_VIDEO_ACTOR||
@@ -446,9 +573,20 @@ async function facebookEvidence(video:VideoInput){
     }
   }
 
-  const frames=directVideoUrl
+  const standardFrames=directVideoUrl
     ? await sampleVideoFrames(directVideoUrl)
     : [];
+
+  const lateSceneFrames=directVideoUrl
+    ? await sampleLateRecipeSceneFrames(directVideoUrl)
+    : [];
+
+  // Keep opening/general coverage plus detailed late ingredient-card scenes.
+  // Scene frames are appended chronologically from 8 seconds onward.
+  const frames=[
+    ...standardFrames,
+    ...lateSceneFrames
+  ].slice(0,36);
 
   if(!caption&&!transcript&&!frames.length){
     const detail=errors.filter(Boolean).join(" | ");
@@ -469,6 +607,8 @@ async function facebookEvidence(video:VideoInput){
       caption?"Facebook reel caption":"",
       thumbnail?"Reel preview image":"",
       directVideoUrl?"Direct Facebook MP4":"",
+      standardFrames.length?"Standard Facebook video frames for AI OCR":"",
+      lateSceneFrames.length?"Late recipe scene keyframes from 8s onward":"",
       frames.length?"Sampled Facebook video frames for AI OCR":""
     ].filter(Boolean)
   };
@@ -592,6 +732,8 @@ export async function POST(request:NextRequest){
                     "When English and a translation describe the same ingredient, prefer the English ingredient/measurement text for the normalized ingredient list rather than counting them as two different ingredients. "+
                     "OCR evidence can be more important than narration for recipe quantities. "+
                     "Inspect EVERY supplied sampled frame, not only the preview image. Return all useful visible ingredient, measurement, and instruction text from those frames in onScreenText, separated by new lines. "+
+                    "Frames are ordered with general samples first and detailed recipe-scene keyframes afterward. Ingredient lists may begin late in the reel, especially after 8 to 12 seconds. Do not stop after understanding the dish from early frames. Continue through all later frames and accumulate ingredients across consecutive ingredient cards. "+
+                    "Treat each changed ingredient card as additional evidence. Do not replace an earlier ingredient with a later one; build the complete list across frames. "+
                     "For bilingual frames, preserve the English line independently even when Hindi or another translation appears directly beneath it. "+
                     "Set available=false only when the combined caption, narration and OCR evidence is genuinely insufficient to produce a useful recipe with at least one ingredient and one preparation or cooking step."
                 }
@@ -691,7 +833,9 @@ export async function POST(request:NextRequest){
         message:
           media.onScreenText
             ? "AI read on-screen recipe text but still could not identify enough reliable recipe detail."
-            : "AI analyzed the reel evidence but could not identify enough reliable recipe detail.",
+            : media.evidence.includes("Late recipe scene keyframes from 8s onward")
+              ? "AI inspected late recipe scenes but could not identify enough reliable recipe detail."
+              : "AI analyzed the reel evidence but could not identify enough reliable recipe detail.",
         analysis:{
           caption:media.caption,
           transcript:media.transcript,
