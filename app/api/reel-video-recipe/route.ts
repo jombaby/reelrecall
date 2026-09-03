@@ -615,6 +615,7 @@ async function facebookEvidence(video:VideoInput){
 
 
 // REELRECALL_EVIDENCE_PRESERVING_TWO_PASS_V9
+// REELRECALL_COMPLETE_INGREDIENT_OCR_V10
 type FrameOcrResult = {
   onScreenText:string;
 };
@@ -629,17 +630,21 @@ async function readFrameTextWithOpenAI(frames:string[]){
 
   // Keep each vision request small so late ingredient cards do not get
   // drowned out by dozens of images in one multimodal call.
-  for(let start=0;start<frames.length;start+=8){
-    const batch=frames.slice(start,start+8);
+  for(let start=0;start<frames.length;start+=3){
+    const batch=frames.slice(start,start+3);
 
     const content:Array<Record<string,unknown>>=[
       {
         type:"input_text",
         text:
-          "Read every supplied frame in chronological order. Extract visible recipe text exactly when legible. "+
+          `This batch contains frames ${start+1} through ${start+batch.length}. `+
+          "Inspect EACH frame separately before combining anything. "+
+          "Extract every legible recipe line from every frame, especially ingredient name + quantity. "+
+          "Do not stop after finding one ingredient. Do not summarize a group of ingredient cards. "+
+          "If consecutive frames show different ingredients, all of those ingredient lines must appear in the output. "+
           "Ingredient cards may show English on one line and Hindi or another translation underneath. "+
           "Preserve the English line independently. Preserve fractions and units such as ½ tbsp, ¼ cup, tsp, tbsp, g, kg, ml, cup. "+
-          "Accumulate all ingredients and instructions across the frames. Do not summarize and do not invent missing text."
+          "Ignore only exact duplicate lines repeated in adjacent frames. Do not invent missing text."
       }
     ];
 
@@ -663,7 +668,7 @@ async function readFrameTextWithOpenAI(frames:string[]){
           body:JSON.stringify({
             model:"gpt-5.6-luna",
             reasoning:{effort:"none"},
-            max_output_tokens:1400,
+            max_output_tokens:2200,
             input:[
               {
                 role:"system",
@@ -671,9 +676,11 @@ async function readFrameTextWithOpenAI(frames:string[]){
                   {
                     type:"input_text",
                     text:
-                      "You are an OCR reader for short cooking videos. "+
-                      "Return only text that is actually visible in the supplied frames. "+
-                      "Do not infer ingredients from the dish. "+
+                      "You are a meticulous frame-by-frame OCR reader for short cooking videos. "+
+                      "Your job is completeness, not summarization. "+
+                      "Return every distinct legible recipe line actually visible in the supplied frames. "+
+                      "A sequence may contain many ingredient cards, one ingredient per frame. "+
+                      "Do not infer ingredients from the dish and do not merge different ingredient lines. "+
                       "Do not omit English text because a translation appears below it."
                   }
                 ]
@@ -740,7 +747,100 @@ async function readFrameTextWithOpenAI(frames:string[]){
     }
   }
 
-  return normalizeOcrText(combined.join("\n"));
+  const rawCombined=normalizeOcrText(combined.join("\n"));
+  if(!rawCombined)return"";
+
+  // One text-only cleanup pass removes duplicate translations/repeated frames,
+  // but is explicitly forbidden from dropping unique ingredient lines.
+  try{
+    const response=await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method:"POST",
+        headers:{
+          Authorization:`Bearer ${apiKey}`,
+          "Content-Type":"application/json"
+        },
+        body:JSON.stringify({
+          model:"gpt-5.6-luna",
+          reasoning:{effort:"none"},
+          max_output_tokens:2600,
+          input:[
+            {
+              role:"system",
+              content:[
+                {
+                  type:"input_text",
+                  text:
+                    "Consolidate OCR text from a cooking reel without losing information. "+
+                    "Keep EVERY unique English ingredient line and quantity. "+
+                    "Remove only exact/redundant repeats and duplicate translated versions of the same English ingredient. "+
+                    "Never shorten the ingredient list. Never summarize multiple ingredients into one line."
+                }
+              ]
+            },
+            {
+              role:"user",
+              content:[
+                {
+                  type:"input_text",
+                  text:
+                    "Return the complete deduplicated OCR text. Preserve every unique ingredient and measurement:\n\n"+
+                    rawCombined
+                }
+              ]
+            }
+          ],
+          text:{
+            format:{
+              type:"json_schema",
+              name:"complete_frame_ocr",
+              strict:true,
+              schema:{
+                type:"object",
+                additionalProperties:false,
+                properties:{
+                  onScreenText:{type:"string"}
+                },
+                required:["onScreenText"]
+              }
+            }
+          }
+        }),
+        signal:AbortSignal.timeout(50000)
+      }
+    );
+
+    if(response.ok){
+      const data=await response.json() as {
+        output?:Array<{
+          content?:Array<{
+            type?:string;
+            text?:string;
+          }>
+        }>
+      };
+
+      const outputText=
+        data.output
+          ?.flatMap(item=>item.content||[])
+          .find(item=>item.type==="output_text")
+          ?.text;
+
+      if(outputText){
+        const parsed=JSON.parse(outputText) as FrameOcrResult;
+        const consolidated=normalizeOcrText(parsed.onScreenText||"");
+        if(consolidated)return consolidated;
+      }
+    }
+  }catch(error){
+    console.warn(
+      "[frame-ocr-consolidation]",
+      error instanceof Error?error.message:"OCR consolidation failed"
+    );
+  }
+
+  return rawCombined;
 }
 
 export async function POST(request:NextRequest){
@@ -794,6 +894,9 @@ export async function POST(request:NextRequest){
 
       if(!media.evidence.includes("Dedicated frame OCR pass")){
         media.evidence.push("Dedicated frame OCR pass");
+      }
+      if(!media.evidence.includes("Complete ingredient OCR v10")){
+        media.evidence.push("Complete ingredient OCR v10");
       }
     }
 
@@ -875,6 +978,7 @@ export async function POST(request:NextRequest){
                     "The supplied extractedEvidence already contains the original reel caption, spoken transcript, and a dedicated OCR pass over sampled video frames. "+
                     "Use ALL three evidence sources together. Never discard caption or spoken-transcript information merely because OCR text is present. "+
                     "Ingredient cards may begin late in the reel, so accumulate every ingredient and measurement found in the OCR text across consecutive cards. "+
+                    "Every distinct ingredient line present in the dedicated OCR text must be represented in the final ingredients array unless it is clearly not an ingredient. Do not shorten a long ingredient list merely to make the recipe concise. "+
                     "For bilingual OCR, preserve the English ingredient/measurement line independently even when Hindi or another translation appears beneath it. "+
                     "Set available=false only when the combined caption, narration and OCR evidence is genuinely insufficient to produce a useful recipe with at least one ingredient and one preparation or cooking step."
                 }
