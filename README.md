@@ -95,3 +95,8 @@ This avoids the misleading Facebook iframe message that can appear for login-, a
 ## Food recipe viewer
 
 Food tiles include a compact **Recipe** button. On first tap, ReelRecall extracts ingredients and cooking steps from the saved/public reel description using the existing OpenAI API key and saves the structured recipe inside the existing JSONB library. Later taps open the saved recipe immediately. No database migration is required.
+
+
+## On-demand AI video recipe analysis
+
+Food videos without a saved recipe include **Analyze Video**. The user explicitly chooses the video file; ReelRecall samples 10 compressed frames in the browser and sends only those still images to the vision endpoint. Files up to 3 MB also use narration transcription. Larger files use visual frames only so requests remain below Vercel Function payload limits. The analysis runs only when the user taps the button and saves the resulting structured recipe into the existing JSONB library.
