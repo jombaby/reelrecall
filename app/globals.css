@@ -266,3 +266,17 @@ header{height:84px;padding:0 max(24px,5vw);display:flex;align-items:center;justi
   .weekly-thumb{height:96px}
   .weekly-video-card-copy{padding:8px 9px 9px}
 }
+
+
+/* Reel analysis diagnostics v13.1 */
+.analysis-diagnostics{margin:20px 0;padding:16px;border:1px solid #c9d3e4;border-radius:16px;background:#f8faff}
+.analysis-diagnostics h3{margin:0}
+.analysis-diagnostic-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:14px 0}
+.analysis-diagnostic-grid>div{display:grid;gap:4px;padding:11px 12px;border:1px solid #dbe2ee;border-radius:11px;background:#fff}
+.analysis-diagnostic-grid small{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:800}
+.analysis-diagnostic-grid strong{font-size:17px;color:var(--ink)}
+.analysis-diagnostics details{border:1px solid #dbe2ee;border-radius:11px;background:#fff;margin:8px 0;overflow:hidden}
+.analysis-diagnostics summary{display:flex;justify-content:space-between;gap:10px;cursor:pointer;padding:11px 13px;font-weight:850}
+.analysis-diagnostics summary span{color:var(--muted);font-size:12px}
+.analysis-diagnostics pre{margin:0;padding:13px;border-top:1px solid #e4e8ef;white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;background:#fff;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#3f4d5d}
+@media(max-width:650px){.analysis-diagnostic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.analysis-diagnostics{padding:13px}.analysis-diagnostics summary{display:grid}}
