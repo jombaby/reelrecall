@@ -100,3 +100,8 @@ Food tiles include a compact **Recipe** button. On first tap, ReelRecall extract
 ## On-demand AI video recipe analysis
 
 Food videos without a saved recipe include **Analyze Video**. The user explicitly chooses the video file; ReelRecall samples 10 compressed frames in the browser and sends only those still images to the vision endpoint. Files up to 3 MB also use narration transcription. Larger files use visual frames only so requests remain below Vercel Function payload limits. The analysis runs only when the user taps the button and saves the resulting structured recipe into the existing JSONB library.
+
+
+## Direct-link AI recipe analysis
+
+The **🎥 Analyze Video** action analyzes the Facebook or Instagram reel URL already saved on the tile; it no longer asks for a local video file. The server invokes Apify only when the user explicitly starts analysis, then sends extracted reel evidence (speech transcript, Instagram on-screen OCR, caption, and available preview image) to the existing OpenAI recipe model. Configure `APIFY_TOKEN` in Vercel. Optional actor overrides: `APIFY_INSTAGRAM_VIDEO_ACTOR`, `APIFY_FACEBOOK_VIDEO_ACTOR`, and `APIFY_FACEBOOK_TRANSCRIPT_ACTOR`.
