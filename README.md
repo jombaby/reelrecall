@@ -90,3 +90,8 @@ Facebook playback now uses a conservative fallback chain instead of assuming an 
 5. ReelRecall only uses the stronger **may no longer be available** wording for items the user explicitly marked unavailable; an oEmbed failure alone never changes a video's saved status.
 
 This avoids the misleading Facebook iframe message that can appear for login-, audience-, geographic-, age-, or embed-restricted content that is still valid in Facebook.
+
+
+## Food recipe viewer
+
+Food tiles include a compact **Recipe** button. On first tap, ReelRecall extracts ingredients and cooking steps from the saved/public reel description using the existing OpenAI API key and saves the structured recipe inside the existing JSONB library. Later taps open the saved recipe immediately. No database migration is required.
