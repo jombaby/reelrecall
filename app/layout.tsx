@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   applicationName: "ReelRecall",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "ReelRecall" },
-  icons: { icon: "/icons/reelrecall.svg", apple: "/icons/reelrecall.svg" },
+  icons: { icon: "/favicon.ico", apple: "/icons/apple-touch-icon.png" },
 };
 
 export const viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" as const, themeColor: "#173d35" };

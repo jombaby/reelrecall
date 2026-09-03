@@ -13,8 +13,9 @@ export default function manifest(): MetadataRoute.Manifest {
       params: { title: "title", text: "text", url: "url" },
     },
     icons: [
-      { src: "/icons/reelrecall.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-      { src: "/icons/reelrecall-maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
+      { src: "/icons/reelrecall-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icons/reelrecall-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/icons/reelrecall-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
   };
 }
