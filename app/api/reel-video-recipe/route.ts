@@ -386,8 +386,10 @@ async function sampleLateRecipeSceneFrames(videoUrl:string){
       .sort((a,b)=>(a.startSeconds||0)-(b.startSeconds||0));
 
     // Recipe reels often introduce ingredients in a sequence after the hook.
-    // Keep up to 24 late-scene keyframes in chronological order.
-    const selected=scenes.slice(0,24);
+    // Keep more late-scene keyframes so ingredient cards near the end of the
+    // sequence are not silently truncated. Preserve the proven 0.22 scene
+    // threshold; only the coverage cap changes here.
+    const selected=scenes.slice(0,36);
     const frames:string[]=[];
 
     for(const scene of selected){
@@ -697,6 +699,7 @@ async function facebookEvidence(video:VideoInput){
 // REELRECALL_EVIDENCE_PRESERVING_TWO_PASS_V9
 // REELRECALL_COMPLETE_INGREDIENT_OCR_V10
 // REELRECALL_OCR_FAILED_BATCH_RECOVERY_V15
+// REELRECALL_LATE_SCENE_COVERAGE_V16
 type FrameOcrResult = {
   onScreenText:string;
 };
