@@ -24,6 +24,8 @@ type AnalysisDiagnostics = {
   totalOcrFrameCount:number;
   ocrBatchesAttempted:number;
   ocrBatchesWithText:number;
+  ocrFramesRetriedIndividually:number;
+  ocrRetryFramesWithText:number;
   rawOcrText:string;
   consolidatedOcrText:string;
 };
@@ -496,6 +498,8 @@ async function instagramEvidence(video:VideoInput){
       totalOcrFrameCount:0,
       ocrBatchesAttempted:0,
       ocrBatchesWithText:0,
+      ocrFramesRetriedIndividually:0,
+      ocrRetryFramesWithText:0,
       rawOcrText:"",
       consolidatedOcrText:""
     } as AnalysisDiagnostics,
@@ -671,6 +675,8 @@ async function facebookEvidence(video:VideoInput){
       totalOcrFrameCount:frames.length,
       ocrBatchesAttempted:0,
       ocrBatchesWithText:0,
+      ocrFramesRetriedIndividually:0,
+      ocrRetryFramesWithText:0,
       rawOcrText:"",
       consolidatedOcrText:""
     } as AnalysisDiagnostics,
@@ -690,9 +696,108 @@ async function facebookEvidence(video:VideoInput){
 // REELRECALL_DIAGNOSTIC_PIPELINE_V12
 // REELRECALL_EVIDENCE_PRESERVING_TWO_PASS_V9
 // REELRECALL_COMPLETE_INGREDIENT_OCR_V10
+// REELRECALL_OCR_FAILED_BATCH_RECOVERY_V15
 type FrameOcrResult = {
   onScreenText:string;
 };
+
+
+async function readSingleFrameTextWithOpenAI(frame:string,frameNumber:number,apiKey:string){
+  try{
+    const response=await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method:"POST",
+        headers:{
+          Authorization:`Bearer ${apiKey}`,
+          "Content-Type":"application/json"
+        },
+        body:JSON.stringify({
+          model:"gpt-5.6-luna",
+          reasoning:{effort:"none"},
+          max_output_tokens:900,
+          input:[
+            {
+              role:"system",
+              content:[
+                {
+                  type:"input_text",
+                  text:
+                    "Read this single cooking-video frame meticulously. "+
+                    "Return every legible recipe ingredient or measurement visible in the frame. "+
+                    "Do not infer missing ingredients. Preserve fractions, units, and English ingredient names exactly. "+
+                    "If English text appears with Hindi or another translation beneath it, keep the English ingredient line."
+                }
+              ]
+            },
+            {
+              role:"user",
+              content:[
+                {
+                  type:"input_text",
+                  text:
+                    `This is frame ${frameNumber}. Look specifically for ingredient cards, including spices, herbs, seeds, and small quantity text.`
+                },
+                {
+                  type:"input_image",
+                  image_url:frame,
+                  detail:"high"
+                }
+              ]
+            }
+          ],
+          text:{
+            format:{
+              type:"json_schema",
+              name:"single_frame_ocr",
+              strict:true,
+              schema:{
+                type:"object",
+                additionalProperties:false,
+                properties:{
+                  onScreenText:{type:"string"}
+                },
+                required:["onScreenText"]
+              }
+            }
+          }
+        }),
+        signal:AbortSignal.timeout(50000)
+      }
+    );
+
+    if(!response.ok){
+      console.warn("[frame-ocr-retry]",`Single-frame OCR failed (${response.status})`);
+      return"";
+    }
+
+    const data=await response.json() as {
+      output?:Array<{
+        content?:Array<{
+          type?:string;
+          text?:string;
+        }>
+      }>
+    };
+
+    const outputText=
+      data.output
+        ?.flatMap(item=>item.content||[])
+        .find(item=>item.type==="output_text")
+        ?.text;
+
+    if(!outputText)return"";
+
+    const parsed=JSON.parse(outputText) as FrameOcrResult;
+    return parsed.onScreenText?.trim()||"";
+  }catch(error){
+    console.warn(
+      "[frame-ocr-retry]",
+      error instanceof Error?error.message:"single-frame OCR failed"
+    );
+    return"";
+  }
+}
 
 async function readFrameTextWithOpenAI(frames:string[]){
   if(!frames.length){
@@ -700,6 +805,8 @@ async function readFrameTextWithOpenAI(frames:string[]){
       text:"",
       batchesAttempted:0,
       batchesWithText:0,
+      framesRetriedIndividually:0,
+      retryFramesWithText:0,
       rawText:"",
       consolidatedText:""
     };
@@ -711,6 +818,8 @@ async function readFrameTextWithOpenAI(frames:string[]){
       text:"",
       batchesAttempted:0,
       batchesWithText:0,
+      framesRetriedIndividually:0,
+      retryFramesWithText:0,
       rawText:"",
       consolidatedText:""
     };
@@ -719,6 +828,8 @@ async function readFrameTextWithOpenAI(frames:string[]){
   const combined:string[]=[];
   let batchesAttempted=0;
   let batchesWithText=0;
+  let framesRetriedIndividually=0;
+  let retryFramesWithText=0;
 
   // Keep each vision request small so late ingredient cards do not get
   // drowned out by dozens of images in one multimodal call.
@@ -826,12 +937,43 @@ async function readFrameTextWithOpenAI(frames:string[]){
           .find(item=>item.type==="output_text")
           ?.text;
 
-      if(!outputText)continue;
+      if(!outputText){
+        for(let i=0;i<batch.length;i++){
+          framesRetriedIndividually+=1;
+          const recovered=await readSingleFrameTextWithOpenAI(
+            batch[i],
+            start+i+1,
+            apiKey
+          );
+          if(recovered){
+            retryFramesWithText+=1;
+            combined.push(recovered);
+          }
+        }
+        continue;
+      }
 
       const parsed=JSON.parse(outputText) as FrameOcrResult;
       if(parsed.onScreenText?.trim()){
         batchesWithText+=1;
         combined.push(parsed.onScreenText.trim());
+      }else{
+        // If the combined 3-frame request produced no text, do not throw away
+        // those frames. Retry each one independently. Small ingredient cards
+        // such as paprika, coriander leaves, or sesame seeds can otherwise be
+        // lost when a multimodal batch returns an empty OCR result.
+        for(let i=0;i<batch.length;i++){
+          framesRetriedIndividually+=1;
+          const recovered=await readSingleFrameTextWithOpenAI(
+            batch[i],
+            start+i+1,
+            apiKey
+          );
+          if(recovered){
+            retryFramesWithText+=1;
+            combined.push(recovered);
+          }
+        }
       }
     }catch(error){
       console.warn(
@@ -847,6 +989,8 @@ async function readFrameTextWithOpenAI(frames:string[]){
       text:"",
       batchesAttempted,
       batchesWithText,
+      framesRetriedIndividually,
+      retryFramesWithText,
       rawText:"",
       consolidatedText:""
     };
@@ -937,6 +1081,8 @@ async function readFrameTextWithOpenAI(frames:string[]){
             text:consolidated,
             batchesAttempted,
             batchesWithText,
+            framesRetriedIndividually,
+            retryFramesWithText,
             rawText:rawCombined,
             consolidatedText:consolidated
           };
@@ -954,6 +1100,8 @@ async function readFrameTextWithOpenAI(frames:string[]){
     text:rawCombined,
     batchesAttempted,
     batchesWithText,
+    framesRetriedIndividually,
+    retryFramesWithText,
     rawText:rawCombined,
     consolidatedText:rawCombined
   };
@@ -1003,12 +1151,16 @@ export async function POST(request:NextRequest){
             text:"",
             batchesAttempted:0,
             batchesWithText:0,
+            framesRetriedIndividually:0,
+            retryFramesWithText:0,
             rawText:"",
             consolidatedText:""
           };
 
     media.diagnostics.ocrBatchesAttempted=frameOcrResult.batchesAttempted;
     media.diagnostics.ocrBatchesWithText=frameOcrResult.batchesWithText;
+    media.diagnostics.ocrFramesRetriedIndividually=frameOcrResult.framesRetriedIndividually;
+    media.diagnostics.ocrRetryFramesWithText=frameOcrResult.retryFramesWithText;
     media.diagnostics.rawOcrText=frameOcrResult.rawText;
     media.diagnostics.consolidatedOcrText=frameOcrResult.consolidatedText;
 
