@@ -115,10 +115,35 @@ async function runActor(actor:string,input:unknown,seconds=120){
   catch(error){throw new Error(`${actor}: invalid Apify result (${error instanceof Error?error.message:"invalid JSON"})`)}
 }
 
+
+function normalizeInstagramReelUrl(rawUrl:string){
+  try{
+    const u=new URL(rawUrl);
+    u.hash="";
+    ["igsh","igshid","utm_source","utm_medium","utm_campaign","utm_content"].forEach(k=>u.searchParams.delete(k));
+
+    const match=u.pathname.match(/^\/reels?\/([^/]+)/i);
+    if(match)return `https://www.instagram.com/reel/${match[1]}/`;
+
+    if(u.hostname==="instagram.com")u.hostname="www.instagram.com";
+    return u.toString();
+  }catch{
+    return rawUrl;
+  }
+}
+
 async function instagramEvidence(video:VideoInput):Promise<MediaEvidence>{
-  const actor=process.env.APIFY_INSTAGRAM_VIDEO_ACTOR||"automation-lab/instagram-reel-ocr-hooks";
-  const rows=await runActor(actor,{startUrls:[{url:video.url}],maxItems:1,frameIntervalSeconds:3,hookWindowSeconds:6,ocrLanguage:"eng",includeTranscript:true,maxVideoDurationSeconds:180,proxyConfiguration:{useApifyProxy:false}},150);
-  const row=rows[0]||{},actorError=rowError(row),transcript=firstText(row,["transcript"]),onScreenText=firstText(row,["onScreenText","hookText"]),caption=firstText(row,["caption","description"]),thumbnail=firstUrl(row,["thumbnailUrl","displayUrl","imageUrl"]);
+  const actor=process.env.APIFY_INSTAGRAM_VIDEO_ACTOR||"apify/instagram-reel-scraper";
+  const rows=await runActor(actor,{
+    username:[normalizeInstagramReelUrl(video.url)],
+    resultsLimit:1,
+    includeTranscript:true,
+    includeDownloadedVideo:false,
+    includeSharesCount:false,
+    skipPinnedPosts:false,
+    skipTrialReels:false
+  },150);
+  const row=rows[0]||{},actorError=rowError(row),transcript=firstText(row,["transcript","videoTranscript","transcriptText"]),onScreenText=firstText(row,["onScreenText","hookText"]),caption=firstText(row,["caption","description","text"]),thumbnail=firstUrl(row,["thumbnailUrl","displayUrl","imageUrl","thumbnail"]);
   if(!transcript&&!onScreenText&&!caption)throw new Error(actorError||"Instagram reel returned no transcript, caption, or readable on-screen text");
   return{caption,transcript,onScreenText,thumbnail,evidence:[transcript?"Spoken narration":"",onScreenText?"On-screen text from sampled reel frames":"",caption?"Instagram reel caption":"",thumbnail?"Reel preview image":""].filter(Boolean)};
 }
