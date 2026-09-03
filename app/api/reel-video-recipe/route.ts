@@ -126,15 +126,24 @@ async function resolveFacebookUrl(input:string){
 
       const html=(await response.text()).slice(0,1500000);
 
+      // REELRECALL_FACEBOOK_SHARE_REGEX_FIX_V5_1
+      // Use RegExp strings rather than regex literals because Facebook HTML
+      // can contain JSON-escaped URLs such as https:\/\/...
       const reelEscaped=html.match(
-        /https:\\/\\/www\.facebook\.com\\/reel\\/([A-Za-z0-9._-]+)/i
+        new RegExp(
+          String.raw`https:\\/\\/www\.facebook\.com\\/reel\\/([A-Za-z0-9._-]+)`,
+          "i"
+        )
       );
       if(reelEscaped?.[1]){
         return `https://www.facebook.com/reel/${reelEscaped[1]}`;
       }
 
       const reelPlain=html.match(
-        /https:\/\/www\.facebook\.com\/reel\/([A-Za-z0-9._-]+)/i
+        new RegExp(
+          String.raw`https://www\.facebook\.com/reel/([A-Za-z0-9._-]+)`,
+          "i"
+        )
       );
       if(reelPlain?.[1]){
         return `https://www.facebook.com/reel/${reelPlain[1]}`;
