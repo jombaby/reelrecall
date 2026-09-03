@@ -18,11 +18,96 @@ function analysis(source:Source,media:MediaEvidence,status:"success"|"partial"|"
   return{status,source,caption:media.caption,transcript:media.transcript,onScreenText:media.onScreenText,thumbnail:media.thumbnail,evidence:media.evidence,retrievedAt:new Date().toISOString(),message,error};
 }
 
+
+async function resolveFacebookShareUrl(rawUrl:string){
+  try{
+    const initial=new URL(rawUrl);
+
+    const clean=(value:string)=>{
+      try{
+        const u=new URL(value);
+        u.hash="";
+        ["mibextid","fbclid","utm_source","utm_medium","utm_campaign","utm_content"].forEach(k=>u.searchParams.delete(k));
+        const reelId=u.pathname.match(/\/reel\/(\d+)/i)?.[1];
+        if(reelId)return `https://www.facebook.com/reel/${reelId}`;
+        if(u.hostname==="m.facebook.com")u.hostname="www.facebook.com";
+        return u.toString().replace(/\?$/,"").replace(/\/$/,"");
+      }catch{return value}
+    };
+
+    const alreadyReel=initial.pathname.match(/\/reel\/(\d+)/i)?.[1];
+    if(alreadyReel)return `https://www.facebook.com/reel/${alreadyReel}`;
+
+    const isFacebook=/^(?:www\.|m\.)?facebook\.com$/i.test(initial.hostname)||initial.hostname==="fb.watch";
+    if(!isFacebook)return rawUrl;
+
+    const response=await fetch(rawUrl,{
+      method:"GET",
+      redirect:"follow",
+      cache:"no-store",
+      signal:AbortSignal.timeout(15000),
+      headers:{
+        "User-Agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1",
+        "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language":"en-US,en;q=0.9"
+      }
+    });
+
+    const redirected=clean(response.url);
+    if(/facebook\.com\/reel\/\d+/i.test(redirected))return redirected;
+
+    const html=(await response.text()).slice(0,1500000);
+
+    const canonical=
+      html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1] ??
+      html.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i)?.[1] ??
+      "";
+
+    if(canonical){
+      const normalized=clean(canonical.replace(/\\\//g,"/"));
+      if(/facebook\.com\/reel\/\d+/i.test(normalized))return normalized;
+    }
+
+    const escaped=html.match(/facebook\\?\.com\\?\/reel\\?\/(\d+)/i)?.[1];
+    if(escaped)return `https://www.facebook.com/reel/${escaped}`;
+
+    const plain=html.match(/facebook\.com\/reel\/(\d+)/i)?.[1];
+    if(plain)return `https://www.facebook.com/reel/${plain}`;
+
+    return clean(rawUrl);
+  }catch{
+    return rawUrl;
+  }
+}
+
+async function canonicalizeFacebookUrls(value:unknown):Promise<unknown>{
+  if(typeof value==="string"){
+    if(/^https?:\/\/(?:(?:www|m)\.)?facebook\.com\/(?:share\/(?:r|v)\/|reel\/)|^https?:\/\/fb\.watch\//i.test(value)){
+      return await resolveFacebookShareUrl(value);
+    }
+    return value;
+  }
+
+  if(Array.isArray(value)){
+    return await Promise.all(value.map(item=>canonicalizeFacebookUrls(item)));
+  }
+
+  if(value&&typeof value==="object"){
+    const entries=await Promise.all(
+      Object.entries(value as Record<string,unknown>).map(async([key,item])=>[key,await canonicalizeFacebookUrls(item)] as const)
+    );
+    return Object.fromEntries(entries);
+  }
+
+  return value;
+}
+
 async function runActor(actor:string,input:unknown,seconds=120){
+  const resolvedInput=await canonicalizeFacebookUrls(input);
   const token=process.env.APIFY_TOKEN;if(!token)throw new Error("APIFY_TOKEN is not configured in Vercel");
   const endpoint=`https://api.apify.com/v2/actors/${actorId(actor)}/run-sync-get-dataset-items?timeout=${seconds}&clean=true&limit=5`;
   let response:Response;
-  try{response=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},body:JSON.stringify(input),signal:AbortSignal.timeout((seconds+15)*1000),cache:"no-store"})}
+  try{response=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},body:JSON.stringify(resolvedInput),signal:AbortSignal.timeout((seconds+15)*1000),cache:"no-store"})}
   catch(error){throw new Error(`${actor}: Apify request failed (${error instanceof Error?error.message:"network error"})`)}
   const raw=await response.text();
   if(!response.ok){let detail=raw.slice(0,500);try{const parsed=JSON.parse(raw) as {error?:{message?:string;type?:string}};detail=parsed.error?.message||parsed.error?.type||detail}catch{}throw new Error(`${actor}: Apify returned ${response.status}${detail?` — ${detail}`:""}`)}
