@@ -13,6 +13,7 @@ type RecipeResult = {
   notes:string;
   servings:string;
   prepTime:string;
+  onScreenText:string;
 };
 type ActorRow = Record<string, unknown>;
 
@@ -166,6 +167,103 @@ async function runActor(actor:string,input:unknown,seconds=120){
   }
 }
 
+
+// REELRECALL_FACEBOOK_REAL_FRAME_OCR_V7
+type FrameProbeRun = {
+  data?:{
+    defaultDatasetId?:string;
+    defaultKeyValueStoreId?:string;
+  }
+};
+
+async function sampleVideoFrames(videoUrl:string){
+  const token=process.env.APIFY_TOKEN;
+  if(!token||!videoUrl)return[] as string[];
+
+  const actor=process.env.APIFY_VIDEO_FRAME_ACTOR||"frameprobe/reel-teardown";
+
+  try{
+    const runResponse=await fetch(
+      `https://api.apify.com/v2/acts/${actorId(actor)}/runs?waitForFinish=180`,
+      {
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "Authorization":`Bearer ${token}`
+        },
+        body:JSON.stringify({
+          videoUrls:[videoUrl],
+          maxVideos:1,
+          framesPerVideo:12,
+          includeOnScreenText:false,
+          language:"en"
+        }),
+        signal:AbortSignal.timeout(195000),
+        cache:"no-store"
+      }
+    );
+
+    if(!runResponse.ok){
+      console.warn("[facebook-frame-ocr]",`FrameProbe failed (${runResponse.status})`);
+      return[];
+    }
+
+    const run=await runResponse.json() as FrameProbeRun;
+    const datasetId=run.data?.defaultDatasetId||"";
+    const storeId=run.data?.defaultKeyValueStoreId||"";
+    if(!datasetId||!storeId)return[];
+
+    const datasetResponse=await fetch(
+      `https://api.apify.com/v2/datasets/${datasetId}/items?clean=true&limit=1`,
+      {
+        headers:{Authorization:`Bearer ${token}`},
+        signal:AbortSignal.timeout(15000),
+        cache:"no-store"
+      }
+    );
+    if(!datasetResponse.ok)return[];
+
+    const rows=await datasetResponse.json() as ActorRow[];
+    const rawKeys=(rows[0]||{})["frameKeys"];
+    const frameKeys=Array.isArray(rawKeys)
+      ? rawKeys
+          .map(value=>typeof value==="string"?value.trim():"")
+          .filter(Boolean)
+          .slice(0,12)
+      : [];
+
+    const frames:string[]=[];
+
+    for(const key of frameKeys){
+      try{
+        const frameResponse=await fetch(
+          `https://api.apify.com/v2/key-value-stores/${storeId}/records/${encodeURIComponent(key)}`,
+          {
+            headers:{Authorization:`Bearer ${token}`},
+            signal:AbortSignal.timeout(15000),
+            cache:"no-store"
+          }
+        );
+        if(!frameResponse.ok)continue;
+
+        const contentType=frameResponse.headers.get("content-type")||"image/jpeg";
+        const bytes=Buffer.from(await frameResponse.arrayBuffer());
+        if(bytes.length>2500000)continue;
+
+        frames.push(`data:${contentType};base64,${bytes.toString("base64")}`);
+      }catch{}
+    }
+
+    return frames;
+  }catch(error){
+    console.warn(
+      "[facebook-frame-ocr]",
+      error instanceof Error?error.message:"frame extraction failed"
+    );
+    return[];
+  }
+}
+
 async function instagramEvidence(video:VideoInput){
   const actor=
     process.env.APIFY_INSTAGRAM_VIDEO_ACTOR||
@@ -226,6 +324,7 @@ async function instagramEvidence(video:VideoInput){
     transcript,
     onScreenText,
     thumbnail,
+    frames:[] as string[],
     evidence:[
       transcript?"Spoken narration":"",
       onScreenText?"Multilingual on-screen text from sampled reel frames":"",
@@ -236,14 +335,12 @@ async function instagramEvidence(video:VideoInput){
 }
 
 async function facebookEvidence(video:VideoInput){
-  // Resolve Facebook share/fb.watch/mobile URLs ONCE before either Actor runs.
-  // The stored ReelRecall URL is unchanged; only analysis uses this canonical URL.
   video={...video,url:await resolveFacebookCanonicalUrl(video.url)};
 
   const errors:string[]=[];
-  let caption="",transcript="",thumbnail="",onScreenText="";
+  let caption="",transcript="",thumbnail="",onScreenText="",directVideoUrl="";
 
-const scraperActor=
+  const scraperActor=
     process.env.APIFY_FACEBOOK_VIDEO_ACTOR||
     "apivault_labs/facebook-reels-video-scraper";
 
@@ -254,9 +351,6 @@ const scraperActor=
       maxCostUsd:0.10,
       downloadMp4:true,
       includeTranscript:true,
-      includeText:true,
-      includeOcr:true,
-      ocrLanguage:"eng+hin",
       proxyCountry:"US",
       maxConcurrency:1,
       timeout:90,
@@ -281,19 +375,27 @@ const scraperActor=
 
     thumbnail=firstUrl(row,[
       "thumbnailUrl",
+      "thumbnail_url",
       "thumbnail",
       "imageUrl"
     ]);
 
-    onScreenText=normalizeOcrText(
-      firstText(row,[
-        "onScreenText",
-        "ocrText",
-        "hookText",
-        "screenText",
-        "visibleText"
-      ])
-    );
+    directVideoUrl=firstUrl(row,[
+      "videoUrl",
+      "video_url",
+      "video_url_hd",
+      "videoUrlHd",
+      "videoUrlHD",
+      "hdVideoUrl",
+      "videoDownloadUrl",
+      "videoDownloadLink",
+      "downloadUrl",
+      "mediaUrl",
+      "webVideoUrl",
+      "mp4Url",
+      "video_url_sd",
+      "sdVideoUrl"
+    ]);
   }catch(error){
     errors.push(
       error instanceof Error
@@ -320,35 +422,20 @@ const scraperActor=
       const err=rowError(row);
       if(err)errors.push(`${transcriptActor}: ${err}`);
 
-      transcript=firstText(row,[
-        "transcript",
-        "text"
-      ]);
+      transcript=firstText(row,["transcript","text"]);
 
       if(!caption){
-        caption=firstText(row,[
-          "title",
-          "description"
-        ]);
+        caption=firstText(row,["title","description"]);
       }
 
       if(!thumbnail){
-        thumbnail=firstUrl(row,[
-          "thumbnailUrl",
-          "thumbnail",
-          "imageUrl"
-        ]);
+        thumbnail=firstUrl(row,["thumbnailUrl","thumbnail","imageUrl"]);
       }
 
-      if(!onScreenText){
-        onScreenText=normalizeOcrText(
-          firstText(row,[
-            "onScreenText",
-            "ocrText",
-            "screenText",
-            "visibleText"
-          ])
-        );
+      if(!directVideoUrl){
+        directVideoUrl=firstUrl(row,[
+          "videoUrl","video_url","video_url_hd","mediaUrl","webVideoUrl","mp4Url"
+        ]);
       }
     }catch(error){
       errors.push(
@@ -359,11 +446,15 @@ const scraperActor=
     }
   }
 
-  if(!caption&&!transcript&&!onScreenText){
+  const frames=directVideoUrl
+    ? await sampleVideoFrames(directVideoUrl)
+    : [];
+
+  if(!caption&&!transcript&&!frames.length){
     const detail=errors.filter(Boolean).join(" | ");
     throw new Error(
       detail||
-      "Facebook reel returned no public caption, spoken transcript, or readable on-screen text"
+      "Facebook reel returned no public caption, spoken transcript, or video frames"
     );
   }
 
@@ -372,11 +463,13 @@ const scraperActor=
     transcript,
     onScreenText,
     thumbnail,
+    frames,
     evidence:[
       transcript?"Spoken narration":"",
-      onScreenText?"Multilingual on-screen text":"",
       caption?"Facebook reel caption":"",
-      thumbnail?"Reel preview image":""
+      thumbnail?"Reel preview image":"",
+      directVideoUrl?"Direct Facebook MP4":"",
+      frames.length?"Sampled Facebook video frames for AI OCR":""
     ].filter(Boolean)
   };
 }
@@ -462,6 +555,14 @@ export async function POST(request:NextRequest){
       });
     }
 
+    for(const frame of media.frames||[]){
+      content.push({
+        type:"input_image",
+        image_url:frame,
+        detail:"high"
+      });
+    }
+
     const response=await fetch(
       "https://api.openai.com/v1/responses",
       {
@@ -490,6 +591,8 @@ export async function POST(request:NextRequest){
                     "Preserve Unicode fractions and measurements exactly when evidence supports them, including ¼, ½, ¾, tsp, tbsp, cup, g, kg, ml and l. "+
                     "When English and a translation describe the same ingredient, prefer the English ingredient/measurement text for the normalized ingredient list rather than counting them as two different ingredients. "+
                     "OCR evidence can be more important than narration for recipe quantities. "+
+                    "Inspect EVERY supplied sampled frame, not only the preview image. Return all useful visible ingredient, measurement, and instruction text from those frames in onScreenText, separated by new lines. "+
+                    "For bilingual frames, preserve the English line independently even when Hindi or another translation appears directly beneath it. "+
                     "Set available=false only when the combined caption, narration and OCR evidence is genuinely insufficient to produce a useful recipe with at least one ingredient and one preparation or cooking step."
                 }
               ]
@@ -520,7 +623,8 @@ export async function POST(request:NextRequest){
                   },
                   notes:{type:"string"},
                   servings:{type:"string"},
-                  prepTime:{type:"string"}
+                  prepTime:{type:"string"},
+                  onScreenText:{type:"string"}
                 },
                 required:[
                   "available",
@@ -529,7 +633,8 @@ export async function POST(request:NextRequest){
                   "steps",
                   "notes",
                   "servings",
-                  "prepTime"
+                  "prepTime",
+                  "onScreenText"
                 ]
               }
             }
@@ -566,6 +671,15 @@ export async function POST(request:NextRequest){
     }
 
     const result=JSON.parse(outputText) as RecipeResult;
+
+    if(result.onScreenText?.trim()){
+      media.onScreenText=normalizeOcrText(
+        [media.onScreenText,result.onScreenText.trim()]
+          .filter(Boolean)
+          .join("\n")
+      );
+      media.evidence.push("AI OCR from sampled Facebook video frames");
+    }
 
     if(
       !result.available||
