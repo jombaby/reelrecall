@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 
-// REELRECALL_MULTILINGUAL_OCR_V3
+// REELRECALL_FACEBOOK_CANONICAL_OCR_V4
 type Source = "Instagram" | "Facebook";
 type VideoInput = { url: string; title: string; notes: string; source: Source };
 type RecipeResult = {
@@ -34,6 +34,64 @@ function firstUrl(row:ActorRow, keys:string[]){
 }
 function rowError(row:ActorRow){
   return firstText(row,["error","errorMessage","message","statusMessage"]);
+}
+
+function normalizeFacebookUrl(input:string){
+  const raw=String(input||"").trim();
+  if(!raw)return raw;
+
+  try{
+    const url=new URL(raw);
+
+    // Remove tracking/share parameters that often confuse actors.
+    const cleanSearch=new URLSearchParams(url.search);
+    for(const key of [
+      "mibextid",
+      "wa_status_inline",
+      "igsh",
+      "share_url",
+      "sfnsn",
+      "rdid"
+    ]){
+      cleanSearch.delete(key);
+    }
+
+    const path=url.pathname.replace(/\/+/g,"/");
+
+    // Canonical public reel form.
+    const reelMatch=path.match(/\/reels?\/([A-Za-z0-9._-]+)/i);
+    if(reelMatch?.[1]){
+      return `https://www.facebook.com/reel/${reelMatch[1]}`;
+    }
+
+    // Common videos/<id> form.
+    const videoMatch=path.match(/\/videos\/([0-9]+)/i);
+    if(videoMatch?.[1]){
+      return `https://www.facebook.com/watch/?v=${videoMatch[1]}`;
+    }
+
+    // watch?v=<id>
+    const watchId=url.searchParams.get("v");
+    if(watchId && /^[0-9]+$/.test(watchId)){
+      return `https://www.facebook.com/watch/?v=${watchId}`;
+    }
+
+    // Some Facebook share URLs use /share/r/<token>. Preserve the path,
+    // but remove noisy query parameters. Certain actors can resolve the
+    // redirect themselves.
+    if(/\/share\/r\//i.test(path)){
+      const normalized=`https://www.facebook.com${path}`;
+      return normalized.replace(/\/$/,"");
+    }
+
+    url.protocol="https:";
+    url.hostname="www.facebook.com";
+    url.search=cleanSearch.toString();
+    url.hash="";
+    return url.toString().replace(/\?$/,"").replace(/\/$/,"");
+  }catch{
+    return raw;
+  }
 }
 
 function normalizeOcrText(value:string){
@@ -115,18 +173,9 @@ async function instagramEvidence(video:VideoInput){
   const rows=await runActor(actor,{
     startUrls:[{url:video.url}],
     maxItems:1,
-
-    // More frequent sampling catches ingredient cards that may only
-    // remain on screen for one or two seconds.
     frameIntervalSeconds:1,
     hookWindowSeconds:12,
-
-    // The previous implementation used "eng". Multilingual food reels
-    // frequently display English followed by Hindi on the next line.
-    // Keep both OCR language families active instead of letting the
-    // translated line suppress the English measurement/ingredient line.
     ocrLanguage:"eng+hin",
-
     includeTranscript:true,
     maxVideoDurationSeconds:180,
     proxyConfiguration:{useApifyProxy:false}
@@ -189,24 +238,22 @@ async function facebookEvidence(video:VideoInput){
   const errors:string[]=[];
   let caption="",transcript="",thumbnail="",onScreenText="";
 
+  const canonicalUrl=normalizeFacebookUrl(video.url);
+
   const scraperActor=
     process.env.APIFY_FACEBOOK_VIDEO_ACTOR||
     "apivault_labs/facebook-reels-video-scraper";
 
   try{
     const rows=await runActor(scraperActor,{
-      startUrls:[video.url],
+      startUrls:[canonicalUrl],
       maxResults:1,
       maxCostUsd:0.10,
-
-      // Ask the scraper for media/visual metadata when available.
-      // This does not change ReelRecall playback behavior.
       downloadMp4:true,
       includeTranscript:true,
       includeText:true,
       includeOcr:true,
       ocrLanguage:"eng+hin",
-
       proxyCountry:"US",
       maxConcurrency:1,
       timeout:90,
@@ -259,7 +306,7 @@ async function facebookEvidence(video:VideoInput){
 
     try{
       const rows=await runActor(transcriptActor,{
-        videoUrls:[video.url],
+        videoUrls:[canonicalUrl],
         maxItems:1,
         language:"auto",
         includeWordTimestamps:false,
@@ -326,7 +373,8 @@ async function facebookEvidence(video:VideoInput){
       transcript?"Spoken narration":"",
       onScreenText?"Multilingual on-screen text":"",
       caption?"Facebook reel caption":"",
-      thumbnail?"Reel preview image":""
+      thumbnail?"Reel preview image":"",
+      canonicalUrl!==video.url?"Canonical Facebook URL":""
     ].filter(Boolean)
   };
 }
