@@ -44,6 +44,31 @@ function firstUrl(row:ActorRow, keys:string[]){
   }
   return "";
 }
+
+// REELRECALL_FACEBOOK_REAL_MP4_FIELD_FIX_V14
+function firstMediaUrl(row:ActorRow, keys:string[]){
+  for(const key of keys){
+    const value=asText(row[key]);
+    if(!/^https?:\/\//i.test(value))continue;
+
+    try{
+      const u=new URL(value);
+      const host=u.hostname.toLowerCase();
+
+      // A facebook.com/fb.watch URL is a page/permalink, not the downloadable
+      // video file FrameProbe needs.
+      if(
+        host==="facebook.com"||
+        host.endsWith(".facebook.com")||
+        host==="fb.watch"||
+        host.endsWith(".fb.watch")
+      )continue;
+
+      return value;
+    }catch{}
+  }
+  return "";
+}
 function rowError(row:ActorRow){
   return firstText(row,["error","errorMessage","message","statusMessage"]);
 }
@@ -483,6 +508,7 @@ async function instagramEvidence(video:VideoInput){
   };
 }
 
+// REELRECALL_FACEBOOK_MP4_HANDOFF_FIX_V14
 async function facebookEvidence(video:VideoInput){
   const resolvedFacebookUrl=await resolveFacebookCanonicalUrl(video.url);
   video={...video,url:resolvedFacebookUrl};
@@ -530,9 +556,18 @@ async function facebookEvidence(video:VideoInput){
       "imageUrl"
     ]);
 
-    directVideoUrl=firstUrl(row,[
-      "videoUrl",
-      "video_url",
+    directVideoUrl=firstMediaUrl(row,[
+      // apivault_labs/facebook-reels-video-scraper documents videoMp4Url
+      // as the downloadable MP4. videoUrl is the Facebook reel permalink
+      // and must NOT be sent to FrameProbe.
+      "videoMp4Url",
+      "videoMp4UrlHd",
+      "videoMp4UrlHD",
+      "videoMp4UrlSd",
+      "videoMp4UrlSD",
+      "video_mp4_url",
+      "video_mp4_url_hd",
+      "video_mp4_url_sd",
       "video_url_hd",
       "videoUrlHd",
       "videoUrlHD",
@@ -583,8 +618,11 @@ async function facebookEvidence(video:VideoInput){
       }
 
       if(!directVideoUrl){
-        directVideoUrl=firstUrl(row,[
-          "videoUrl","video_url","video_url_hd","mediaUrl","webVideoUrl","mp4Url"
+        directVideoUrl=firstMediaUrl(row,[
+          "videoMp4Url","videoMp4UrlHd","videoMp4UrlHD",
+          "videoMp4UrlSd","videoMp4UrlSD",
+          "video_mp4_url","video_mp4_url_hd","video_mp4_url_sd",
+          "video_url_hd","mediaUrl","webVideoUrl","mp4Url","video_url_sd"
         ]);
       }
     }catch(error){
@@ -640,7 +678,7 @@ async function facebookEvidence(video:VideoInput){
       transcript?"Spoken narration":"",
       caption?"Facebook reel caption":"",
       thumbnail?"Reel preview image":"",
-      directVideoUrl?"Direct Facebook MP4":"",
+      directVideoUrl?"Verified direct Facebook MP4":"",
       standardFrames.length?"Standard Facebook video frames for AI OCR":"",
       lateSceneFrames.length?"Late recipe scene keyframes from 8s onward":"",
       frames.length?"Sampled Facebook video frames for AI OCR":""
