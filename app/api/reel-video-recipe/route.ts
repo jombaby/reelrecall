@@ -36,52 +36,36 @@ function rowError(row:ActorRow){
   return firstText(row,["error","errorMessage","message","statusMessage"]);
 }
 
-function normalizeFacebookUrl(input:string){
+// REELRECALL_FACEBOOK_SHARE_RESOLVER_V5
+function canonicalizeFacebookUrl(input:string){
   const raw=String(input||"").trim();
   if(!raw)return raw;
 
   try{
     const url=new URL(raw);
-
-    // Remove tracking/share parameters that often confuse actors.
     const cleanSearch=new URLSearchParams(url.search);
+
     for(const key of [
-      "mibextid",
-      "wa_status_inline",
-      "igsh",
-      "share_url",
-      "sfnsn",
-      "rdid"
+      "mibextid","wa_status_inline","igsh","share_url","sfnsn","rdid"
     ]){
       cleanSearch.delete(key);
     }
 
     const path=url.pathname.replace(/\/+/g,"/");
 
-    // Canonical public reel form.
     const reelMatch=path.match(/\/reels?\/([A-Za-z0-9._-]+)/i);
     if(reelMatch?.[1]){
       return `https://www.facebook.com/reel/${reelMatch[1]}`;
     }
 
-    // Common videos/<id> form.
     const videoMatch=path.match(/\/videos\/([0-9]+)/i);
     if(videoMatch?.[1]){
       return `https://www.facebook.com/watch/?v=${videoMatch[1]}`;
     }
 
-    // watch?v=<id>
     const watchId=url.searchParams.get("v");
     if(watchId && /^[0-9]+$/.test(watchId)){
       return `https://www.facebook.com/watch/?v=${watchId}`;
-    }
-
-    // Some Facebook share URLs use /share/r/<token>. Preserve the path,
-    // but remove noisy query parameters. Certain actors can resolve the
-    // redirect themselves.
-    if(/\/share\/r\//i.test(path)){
-      const normalized=`https://www.facebook.com${path}`;
-      return normalized.replace(/\/$/,"");
     }
 
     url.protocol="https:";
@@ -92,6 +76,88 @@ function normalizeFacebookUrl(input:string){
   }catch{
     return raw;
   }
+}
+
+async function resolveFacebookUrl(input:string){
+  const original=canonicalizeFacebookUrl(input);
+
+  if(
+    /facebook\.com\/reel\/[^/?#]+/i.test(original)||
+    /facebook\.com\/watch\/?\?v=\d+/i.test(original)
+  ){
+    return original;
+  }
+
+  if(!/facebook\.com\/share\/r\//i.test(original)){
+    return original;
+  }
+
+  const candidates=[
+    original,
+    original.replace("www.facebook.com","m.facebook.com")
+  ];
+
+  for(const candidate of candidates){
+    try{
+      const response=await fetch(candidate,{
+        method:"GET",
+        redirect:"follow",
+        cache:"no-store",
+        headers:{
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "+
+            "AppleWebKit/537.36 (KHTML, like Gecko) "+
+            "Chrome/152.0.0.0 Safari/537.36",
+          "Accept":
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language":"en-US,en;q=0.9"
+        },
+        signal:AbortSignal.timeout(15000)
+      });
+
+      const finalUrl=canonicalizeFacebookUrl(response.url||candidate);
+
+      if(
+        /facebook\.com\/reel\/[^/?#]+/i.test(finalUrl)||
+        /facebook\.com\/watch\/?\?v=\d+/i.test(finalUrl)
+      ){
+        return finalUrl;
+      }
+
+      const html=(await response.text()).slice(0,1500000);
+
+      const reelEscaped=html.match(
+        /https:\\/\\/www\.facebook\.com\\/reel\\/([A-Za-z0-9._-]+)/i
+      );
+      if(reelEscaped?.[1]){
+        return `https://www.facebook.com/reel/${reelEscaped[1]}`;
+      }
+
+      const reelPlain=html.match(
+        /https:\/\/www\.facebook\.com\/reel\/([A-Za-z0-9._-]+)/i
+      );
+      if(reelPlain?.[1]){
+        return `https://www.facebook.com/reel/${reelPlain[1]}`;
+      }
+
+      const videoId=
+        html.match(/"video_id":"(\d+)"/i)?.[1]||
+        html.match(/"videoID":"(\d+)"/i)?.[1]||
+        html.match(/"videoId":"(\d+)"/i)?.[1];
+
+      if(videoId){
+        return `https://www.facebook.com/watch/?v=${videoId}`;
+      }
+    }catch(error){
+      console.warn(
+        "[facebook-share-resolver]",
+        candidate,
+        error instanceof Error?error.message:"resolution failed"
+      );
+    }
+  }
+
+  return original;
 }
 
 function normalizeOcrText(value:string){
@@ -238,15 +304,25 @@ async function facebookEvidence(video:VideoInput){
   const errors:string[]=[];
   let caption="",transcript="",thumbnail="",onScreenText="";
 
-  const canonicalUrl=normalizeFacebookUrl(video.url);
+  const canonicalUrl=await resolveFacebookUrl(video.url);
+  const facebookUrlCandidates=[
+    canonicalUrl,
+    canonicalizeFacebookUrl(video.url),
+    video.url
+  ].filter((value,index,array)=>value&&array.indexOf(value)===index);
 
   const scraperActor=
     process.env.APIFY_FACEBOOK_VIDEO_ACTOR||
     "apivault_labs/facebook-reels-video-scraper";
 
   try{
-    const rows=await runActor(scraperActor,{
-      startUrls:[canonicalUrl],
+    let rows:ActorRow[]=[];
+    let scraperLastError="";
+
+    for(const candidateUrl of facebookUrlCandidates){
+      try{
+        rows=await runActor(scraperActor,{
+      startUrls:[candidateUrl],
       maxResults:1,
       maxCostUsd:0.10,
       downloadMp4:true,
@@ -259,6 +335,16 @@ async function facebookEvidence(video:VideoInput){
       timeout:90,
       maxRetries:1
     },120);
+        if(rows.length)break;
+      }catch(error){
+        scraperLastError=
+          error instanceof Error?error.message:`${scraperActor}: failed`;
+      }
+    }
+
+    if(!rows.length&&scraperLastError){
+      throw new Error(scraperLastError);
+    }
 
     const row=rows[0]||{};
     const err=rowError(row);
@@ -305,13 +391,28 @@ async function facebookEvidence(video:VideoInput){
       "automation-lab/facebook-video-transcript-extractor";
 
     try{
-      const rows=await runActor(transcriptActor,{
-        videoUrls:[canonicalUrl],
+      let rows:ActorRow[]=[];
+      let transcriptLastError="";
+
+      for(const candidateUrl of facebookUrlCandidates){
+        try{
+          rows=await runActor(transcriptActor,{
+        videoUrls:[candidateUrl],
         maxItems:1,
         language:"auto",
         includeWordTimestamps:false,
         maxVideoDurationSeconds:180
       },150);
+          if(rows.length)break;
+        }catch(error){
+          transcriptLastError=
+            error instanceof Error?error.message:`${transcriptActor}: failed`;
+        }
+      }
+
+      if(!rows.length&&transcriptLastError){
+        throw new Error(transcriptLastError);
+      }
 
       const row=rows[0]||{};
       const err=rowError(row);
@@ -374,7 +475,7 @@ async function facebookEvidence(video:VideoInput){
       onScreenText?"Multilingual on-screen text":"",
       caption?"Facebook reel caption":"",
       thumbnail?"Reel preview image":"",
-      canonicalUrl!==video.url?"Canonical Facebook URL":""
+      canonicalUrl!==video.url?"Resolved/canonical Facebook URL":""
     ].filter(Boolean)
   };
 }
