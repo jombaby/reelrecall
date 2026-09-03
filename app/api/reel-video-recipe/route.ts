@@ -16,6 +16,18 @@ type RecipeResult = {
 };
 type ActorRow = Record<string, unknown>;
 
+type AnalysisDiagnostics = {
+  resolvedFacebookUrl:string;
+  directMp4Found:boolean;
+  standardFrameCount:number;
+  lateSceneFrameCount:number;
+  totalOcrFrameCount:number;
+  ocrBatchesAttempted:number;
+  ocrBatchesWithText:number;
+  rawOcrText:string;
+  consolidatedOcrText:string;
+};
+
 function actorId(value:string){return value.replace("/", "~")}
 function asText(value:unknown){return typeof value === "string" ? value.trim() : ""}
 function firstText(row:ActorRow, keys:string[]){
@@ -451,6 +463,17 @@ async function instagramEvidence(video:VideoInput){
     onScreenText,
     thumbnail,
     frames:[] as string[],
+    diagnostics:{
+      resolvedFacebookUrl:"",
+      directMp4Found:false,
+      standardFrameCount:0,
+      lateSceneFrameCount:0,
+      totalOcrFrameCount:0,
+      ocrBatchesAttempted:0,
+      ocrBatchesWithText:0,
+      rawOcrText:"",
+      consolidatedOcrText:""
+    } as AnalysisDiagnostics,
     evidence:[
       transcript?"Spoken narration":"",
       onScreenText?"Multilingual on-screen text from sampled reel frames":"",
@@ -461,7 +484,8 @@ async function instagramEvidence(video:VideoInput){
 }
 
 async function facebookEvidence(video:VideoInput){
-  video={...video,url:await resolveFacebookCanonicalUrl(video.url)};
+  const resolvedFacebookUrl=await resolveFacebookCanonicalUrl(video.url);
+  video={...video,url:resolvedFacebookUrl};
 
   const errors:string[]=[];
   let caption="",transcript="",thumbnail="",onScreenText="",directVideoUrl="";
@@ -601,6 +625,17 @@ async function facebookEvidence(video:VideoInput){
     onScreenText,
     thumbnail,
     frames,
+    diagnostics:{
+      resolvedFacebookUrl,
+      directMp4Found:Boolean(directVideoUrl),
+      standardFrameCount:standardFrames.length,
+      lateSceneFrameCount:lateSceneFrames.length,
+      totalOcrFrameCount:frames.length,
+      ocrBatchesAttempted:0,
+      ocrBatchesWithText:0,
+      rawOcrText:"",
+      consolidatedOcrText:""
+    } as AnalysisDiagnostics,
     evidence:[
       transcript?"Spoken narration":"",
       caption?"Facebook reel caption":"",
@@ -614,6 +649,7 @@ async function facebookEvidence(video:VideoInput){
 }
 
 
+// REELRECALL_DIAGNOSTIC_PIPELINE_V12
 // REELRECALL_EVIDENCE_PRESERVING_TWO_PASS_V9
 // REELRECALL_COMPLETE_INGREDIENT_OCR_V10
 type FrameOcrResult = {
@@ -621,17 +657,36 @@ type FrameOcrResult = {
 };
 
 async function readFrameTextWithOpenAI(frames:string[]){
-  if(!frames.length)return"";
+  if(!frames.length){
+    return{
+      text:"",
+      batchesAttempted:0,
+      batchesWithText:0,
+      rawText:"",
+      consolidatedText:""
+    };
+  }
 
   const apiKey=process.env.OPENAI_API_KEY;
-  if(!apiKey)return"";
+  if(!apiKey){
+    return{
+      text:"",
+      batchesAttempted:0,
+      batchesWithText:0,
+      rawText:"",
+      consolidatedText:""
+    };
+  }
 
   const combined:string[]=[];
+  let batchesAttempted=0;
+  let batchesWithText=0;
 
   // Keep each vision request small so late ingredient cards do not get
   // drowned out by dozens of images in one multimodal call.
   for(let start=0;start<frames.length;start+=3){
     const batch=frames.slice(start,start+3);
+    batchesAttempted+=1;
 
     const content:Array<Record<string,unknown>>=[
       {
@@ -737,6 +792,7 @@ async function readFrameTextWithOpenAI(frames:string[]){
 
       const parsed=JSON.parse(outputText) as FrameOcrResult;
       if(parsed.onScreenText?.trim()){
+        batchesWithText+=1;
         combined.push(parsed.onScreenText.trim());
       }
     }catch(error){
@@ -748,7 +804,15 @@ async function readFrameTextWithOpenAI(frames:string[]){
   }
 
   const rawCombined=normalizeOcrText(combined.join("\n"));
-  if(!rawCombined)return"";
+  if(!rawCombined){
+    return{
+      text:"",
+      batchesAttempted,
+      batchesWithText,
+      rawText:"",
+      consolidatedText:""
+    };
+  }
 
   // One text-only cleanup pass removes duplicate translations/repeated frames,
   // but is explicitly forbidden from dropping unique ingredient lines.
@@ -830,7 +894,15 @@ async function readFrameTextWithOpenAI(frames:string[]){
       if(outputText){
         const parsed=JSON.parse(outputText) as FrameOcrResult;
         const consolidated=normalizeOcrText(parsed.onScreenText||"");
-        if(consolidated)return consolidated;
+        if(consolidated){
+          return{
+            text:consolidated,
+            batchesAttempted,
+            batchesWithText,
+            rawText:rawCombined,
+            consolidatedText:consolidated
+          };
+        }
       }
     }
   }catch(error){
@@ -840,7 +912,13 @@ async function readFrameTextWithOpenAI(frames:string[]){
     );
   }
 
-  return rawCombined;
+  return{
+    text:rawCombined,
+    batchesAttempted,
+    batchesWithText,
+    rawText:rawCombined,
+    consolidatedText:rawCombined
+  };
 }
 
 export async function POST(request:NextRequest){
@@ -880,10 +958,23 @@ export async function POST(request:NextRequest){
 
     // First pass: OCR the sampled frames only. This AUGMENTS caption/transcript;
     // it never replaces them.
-    const frameOcrText=
+    const frameOcrResult=
       media.frames?.length
         ? await readFrameTextWithOpenAI(media.frames)
-        : "";
+        : {
+            text:"",
+            batchesAttempted:0,
+            batchesWithText:0,
+            rawText:"",
+            consolidatedText:""
+          };
+
+    media.diagnostics.ocrBatchesAttempted=frameOcrResult.batchesAttempted;
+    media.diagnostics.ocrBatchesWithText=frameOcrResult.batchesWithText;
+    media.diagnostics.rawOcrText=frameOcrResult.rawText;
+    media.diagnostics.consolidatedOcrText=frameOcrResult.consolidatedText;
+
+    const frameOcrText=frameOcrResult.text;
 
     if(frameOcrText){
       media.onScreenText=normalizeOcrText(
@@ -1075,7 +1166,8 @@ export async function POST(request:NextRequest){
           caption:media.caption,
           transcript:media.transcript,
           onScreenText:media.onScreenText,
-          evidence:media.evidence
+          evidence:media.evidence,
+          diagnostics:media.diagnostics
         }
       });
     }
@@ -1102,7 +1194,8 @@ export async function POST(request:NextRequest){
         caption:media.caption,
         transcript:media.transcript,
         onScreenText:media.onScreenText,
-        evidence:media.evidence
+        evidence:media.evidence,
+        diagnostics:media.diagnostics
       }
     });
   }catch(error){
