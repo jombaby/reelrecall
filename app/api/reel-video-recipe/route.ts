@@ -13,7 +13,6 @@ type RecipeResult = {
   notes:string;
   servings:string;
   prepTime:string;
-  onScreenText:string;
 };
 type ActorRow = Record<string, unknown>;
 
@@ -614,6 +613,136 @@ async function facebookEvidence(video:VideoInput){
   };
 }
 
+
+// REELRECALL_EVIDENCE_PRESERVING_TWO_PASS_V9
+type FrameOcrResult = {
+  onScreenText:string;
+};
+
+async function readFrameTextWithOpenAI(frames:string[]){
+  if(!frames.length)return"";
+
+  const apiKey=process.env.OPENAI_API_KEY;
+  if(!apiKey)return"";
+
+  const combined:string[]=[];
+
+  // Keep each vision request small so late ingredient cards do not get
+  // drowned out by dozens of images in one multimodal call.
+  for(let start=0;start<frames.length;start+=8){
+    const batch=frames.slice(start,start+8);
+
+    const content:Array<Record<string,unknown>>=[
+      {
+        type:"input_text",
+        text:
+          "Read every supplied frame in chronological order. Extract visible recipe text exactly when legible. "+
+          "Ingredient cards may show English on one line and Hindi or another translation underneath. "+
+          "Preserve the English line independently. Preserve fractions and units such as ½ tbsp, ¼ cup, tsp, tbsp, g, kg, ml, cup. "+
+          "Accumulate all ingredients and instructions across the frames. Do not summarize and do not invent missing text."
+      }
+    ];
+
+    for(const frame of batch){
+      content.push({
+        type:"input_image",
+        image_url:frame,
+        detail:"high"
+      });
+    }
+
+    try{
+      const response=await fetch(
+        "https://api.openai.com/v1/responses",
+        {
+          method:"POST",
+          headers:{
+            Authorization:`Bearer ${apiKey}`,
+            "Content-Type":"application/json"
+          },
+          body:JSON.stringify({
+            model:"gpt-5.6-luna",
+            reasoning:{effort:"none"},
+            max_output_tokens:1400,
+            input:[
+              {
+                role:"system",
+                content:[
+                  {
+                    type:"input_text",
+                    text:
+                      "You are an OCR reader for short cooking videos. "+
+                      "Return only text that is actually visible in the supplied frames. "+
+                      "Do not infer ingredients from the dish. "+
+                      "Do not omit English text because a translation appears below it."
+                  }
+                ]
+              },
+              {
+                role:"user",
+                content
+              }
+            ],
+            text:{
+              format:{
+                type:"json_schema",
+                name:"frame_ocr",
+                strict:true,
+                schema:{
+                  type:"object",
+                  additionalProperties:false,
+                  properties:{
+                    onScreenText:{type:"string"}
+                  },
+                  required:["onScreenText"]
+                }
+              }
+            }
+          }),
+          signal:AbortSignal.timeout(50000)
+        }
+      );
+
+      if(!response.ok){
+        console.warn(
+          "[frame-ocr]",
+          `OpenAI frame OCR failed (${response.status})`
+        );
+        continue;
+      }
+
+      const data=await response.json() as {
+        output?:Array<{
+          content?:Array<{
+            type?:string;
+            text?:string;
+          }>
+        }>
+      };
+
+      const outputText=
+        data.output
+          ?.flatMap(item=>item.content||[])
+          .find(item=>item.type==="output_text")
+          ?.text;
+
+      if(!outputText)continue;
+
+      const parsed=JSON.parse(outputText) as FrameOcrResult;
+      if(parsed.onScreenText?.trim()){
+        combined.push(parsed.onScreenText.trim());
+      }
+    }catch(error){
+      console.warn(
+        "[frame-ocr]",
+        error instanceof Error?error.message:"frame OCR failed"
+      );
+    }
+  }
+
+  return normalizeOcrText(combined.join("\n"));
+}
+
 export async function POST(request:NextRequest){
   if(!process.env.OPENAI_API_KEY){
     return NextResponse.json(
@@ -648,6 +777,25 @@ export async function POST(request:NextRequest){
       video.source==="Instagram"
         ? await instagramEvidence(video)
         : await facebookEvidence(video);
+
+    // First pass: OCR the sampled frames only. This AUGMENTS caption/transcript;
+    // it never replaces them.
+    const frameOcrText=
+      media.frames?.length
+        ? await readFrameTextWithOpenAI(media.frames)
+        : "";
+
+    if(frameOcrText){
+      media.onScreenText=normalizeOcrText(
+        [media.onScreenText,frameOcrText]
+          .filter(Boolean)
+          .join("\n")
+      );
+
+      if(!media.evidence.includes("Dedicated frame OCR pass")){
+        media.evidence.push("Dedicated frame OCR pass");
+      }
+    }
 
     const evidenceText=[
       video.notes
@@ -695,13 +843,6 @@ export async function POST(request:NextRequest){
       });
     }
 
-    for(const frame of media.frames||[]){
-      content.push({
-        type:"input_image",
-        image_url:frame,
-        detail:"high"
-      });
-    }
 
     const response=await fetch(
       "https://api.openai.com/v1/responses",
@@ -731,10 +872,10 @@ export async function POST(request:NextRequest){
                     "Preserve Unicode fractions and measurements exactly when evidence supports them, including ¼, ½, ¾, tsp, tbsp, cup, g, kg, ml and l. "+
                     "When English and a translation describe the same ingredient, prefer the English ingredient/measurement text for the normalized ingredient list rather than counting them as two different ingredients. "+
                     "OCR evidence can be more important than narration for recipe quantities. "+
-                    "Inspect EVERY supplied sampled frame, not only the preview image. Return all useful visible ingredient, measurement, and instruction text from those frames in onScreenText, separated by new lines. "+
-                    "Frames are ordered with general samples first and detailed recipe-scene keyframes afterward. Ingredient lists may begin late in the reel, especially after 8 to 12 seconds. Do not stop after understanding the dish from early frames. Continue through all later frames and accumulate ingredients across consecutive ingredient cards. "+
-                    "Treat each changed ingredient card as additional evidence. Do not replace an earlier ingredient with a later one; build the complete list across frames. "+
-                    "For bilingual frames, preserve the English line independently even when Hindi or another translation appears directly beneath it. "+
+                    "The supplied extractedEvidence already contains the original reel caption, spoken transcript, and a dedicated OCR pass over sampled video frames. "+
+                    "Use ALL three evidence sources together. Never discard caption or spoken-transcript information merely because OCR text is present. "+
+                    "Ingredient cards may begin late in the reel, so accumulate every ingredient and measurement found in the OCR text across consecutive cards. "+
+                    "For bilingual OCR, preserve the English ingredient/measurement line independently even when Hindi or another translation appears beneath it. "+
                     "Set available=false only when the combined caption, narration and OCR evidence is genuinely insufficient to produce a useful recipe with at least one ingredient and one preparation or cooking step."
                 }
               ]
@@ -765,8 +906,7 @@ export async function POST(request:NextRequest){
                   },
                   notes:{type:"string"},
                   servings:{type:"string"},
-                  prepTime:{type:"string"},
-                  onScreenText:{type:"string"}
+                  prepTime:{type:"string"}
                 },
                 required:[
                   "available",
@@ -775,8 +915,7 @@ export async function POST(request:NextRequest){
                   "steps",
                   "notes",
                   "servings",
-                  "prepTime",
-                  "onScreenText"
+                  "prepTime"
                 ]
               }
             }
@@ -814,14 +953,6 @@ export async function POST(request:NextRequest){
 
     const result=JSON.parse(outputText) as RecipeResult;
 
-    if(result.onScreenText?.trim()){
-      media.onScreenText=normalizeOcrText(
-        [media.onScreenText,result.onScreenText.trim()]
-          .filter(Boolean)
-          .join("\n")
-      );
-      media.evidence.push("AI OCR from sampled Facebook video frames");
-    }
 
     if(
       !result.available||
@@ -832,7 +963,7 @@ export async function POST(request:NextRequest){
         recipe:null,
         message:
           media.onScreenText
-            ? "AI read on-screen recipe text but still could not identify enough reliable recipe detail."
+            ? "AI combined caption, transcript, and dedicated frame OCR but still could not identify enough reliable recipe detail."
             : media.evidence.includes("Late recipe scene keyframes from 8s onward")
               ? "AI inspected late recipe scenes but could not identify enough reliable recipe detail."
               : "AI analyzed the reel evidence but could not identify enough reliable recipe detail.",
