@@ -145,13 +145,16 @@ function WeeklyMenuThumb({item}:{item:WeeklyMenuItem}){
 function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:Video[];onClose:()=>void;onRecipeSaved:(videoId:string,recipe:Recipe)=>void;onOpenRecipe:(videoId:string)=>void}){
   const[weekStart,setWeekStart]=useState(currentMondayISO()),[items,setItems]=useState<WeeklyMenuItem[]>(()=>generateWeeklyItems(videos)),[savedMenus,setSavedMenus]=useState<SavedWeeklyMenu[]>([]),[activeSavedId,setActiveSavedId]=useState(""),[menuName,setMenuName]=useState(""),[status,setStatus]=useState(""),[loadingSaved,setLoadingSaved]=useState(true),[saving,setSaving]=useState(false),[recipeCheckOpen,setRecipeCheckOpen]=useState(false),[batch,setBatch]=useState<BatchRecipeState>({running:false,total:0,completed:0,success:0,failed:0,currentIds:[],failures:[]}),[groceryLoading,setGroceryLoading]=useState(false),[groceryList,setGroceryList]=useState<GroceryListResult|null>(null),[manualRecipeVideoId,setManualRecipeVideoId]=useState<string|null>(null),[manualRecipeDraft,setManualRecipeDraft]=useState<RecipeDraft|null>(null),[manualRecipeSaving,setManualRecipeSaving]=useState(false),[singleRetryId,setSingleRetryId]=useState<string|null>(null);
   const batchStopRef=useRef(false);
+  const batchRunningRef=useRef(false);
+  const batchRunIdRef=useRef(0);
+  const batchCompletedIdsRef=useRef<Set<string>>(new Set());
   const foodCount=videos.filter(v=>v.status==="available"&&v.category.toLowerCase()==="food").length;
   const menuVideos=useMemo(()=>{const seen=new Set<string>();return items.flatMap(item=>{if(seen.has(item.videoId))return[];const video=videos.find(v=>v.id===item.videoId);if(!video)return[];seen.add(item.videoId);return[video]})},[items,videos]);
   const missingRecipeVideos=menuVideos.filter(video=>!video.recipe),recipeReadyCount=menuVideos.length-missingRecipeVideos.length,allRecipesReady=menuVideos.length>0&&!missingRecipeVideos.length;
 
   useEffect(()=>{let active=true;(async()=>{try{const response=await fetch("/api/weekly-menus",{cache:"no-store"});if(response.status===401){location.href="/sign-in";return}if(!response.ok)throw new Error();const data=await response.json() as {menus?:SavedWeeklyMenu[]};if(active)setSavedMenus(Array.isArray(data.menus)?data.menus:[])}catch{if(active)setStatus("Saved menus are temporarily unavailable.")}finally{if(active)setLoadingSaved(false)}})();return()=>{active=false}},[]);
 
-  function resetDerived(){setRecipeCheckOpen(false);setGroceryList(null);setBatch({running:false,total:0,completed:0,success:0,failed:0,currentIds:[],failures:[]})}
+  function resetDerived(){batchStopRef.current=true;batchRunIdRef.current+=1;batchRunningRef.current=false;batchCompletedIdsRef.current=new Set();setRecipeCheckOpen(false);setGroceryList(null);setBatch({running:false,total:0,completed:0,success:0,failed:0,currentIds:[],failures:[]})}
   function regenerate(){setItems(generateWeeklyItems(videos));setActiveSavedId("");setMenuName("");resetDerived();setStatus(foodCount?"New weekly menu generated.":"Add Food videos before generating a weekly menu.")}
   function moveWeek(delta:number){setWeekStart(current=>shiftWeekISO(current,delta));setItems(generateWeeklyItems(videos));setActiveSavedId("");setMenuName("");resetDerived()}
   function reroll(day:string,slot:WeeklyMenuSlot){const current=items.find(item=>item.day===day&&item.slot===slot),used=new Set(items.filter(item=>item!==current).map(item=>item.videoId));const video=chooseWeeklyVideo(videos,slot,used);if(!video){setStatus(`No matching Food videos are available for ${slot}.`);return}const next=menuItemFromVideo(day,slot,video);setItems(existing=>[...existing.filter(item=>!(item.day===day&&item.slot===slot)),next]);setActiveSavedId("");resetDerived()}
@@ -163,33 +166,114 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
   function checkRecipes(){if(!activeSavedId){setStatus("Save the weekly menu first, then check recipe readiness.");return}setRecipeCheckOpen(true);setStatus(missingRecipeVideos.length?`${missingRecipeVideos.length} unique menu video${missingRecipeVideos.length===1?" is":"s are"} missing a recipe.`:"Every menu video has a recipe. Grocery List is ready.")}
 
   async function analyzeMissingRecipes(){
+    if(batchRunningRef.current){setStatus("Batch recipe analysis is already running.");return}
     if(!activeSavedId){setStatus("Save the weekly menu before batch analysis.");return}
-    const queue=[...missingRecipeVideos];if(!queue.length){setRecipeCheckOpen(true);setStatus("Every menu video already has a recipe.");return}
-    batchStopRef.current=false;setRecipeCheckOpen(true);setGroceryList(null);setBatch({running:true,total:queue.length,completed:0,success:0,failed:0,currentIds:[],failures:[]});setStatus("Batch recipe analysis started. You can continue viewing the weekly menu while it runs.");
+
+    const queue=[...new Map(missingRecipeVideos.map(video=>[video.id,video] as const)).values()];
+    if(!queue.length){setRecipeCheckOpen(true);setStatus("Every menu video already has a recipe.");return}
+
+    batchRunningRef.current=true;
+    batchStopRef.current=false;
+    batchCompletedIdsRef.current=new Set();
+    const runId=++batchRunIdRef.current;
+
+    setRecipeCheckOpen(true);
+    setGroceryList(null);
+    setBatch({running:true,total:queue.length,completed:0,success:0,failed:0,currentIds:[],failures:[]});
+    setStatus("Batch recipe analysis started. You can continue viewing the weekly menu while it runs.");
+
     let nextIndex=0;
-    const worker=async()=>{while(true){if(batchStopRef.current)return;const index=nextIndex++;if(index>=queue.length)return;const video=queue[index];setBatch(current=>({...current,currentIds:[...current.currentIds,video.id]}));let ok=false,error="";try{const response=await fetch("/api/reel-video-recipe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes,source:video.source}})});const result=await response.json() as {analysis?:{message?:string;error?:string};recipe?:Recipe|null;error?:string};if(result.recipe){onRecipeSaved(video.id,result.recipe);ok=true}else error=result.analysis?.error||result.error||result.analysis?.message||`No reliable recipe was generated (HTTP ${response.status}).`}catch(err){error=err instanceof Error?err.message:"Analysis request failed"}setBatch(current=>({...current,completed:current.completed+1,success:current.success+(ok?1:0),failed:current.failed+(ok?0:1),currentIds:current.currentIds.filter(id=>id!==video.id),failures:ok?current.failures:[...current.failures,{videoId:video.id,title:video.title,error}]}));await new Promise<void>(resolve=>window.setTimeout(resolve,25))}};
-    const workers=Array.from({length:Math.min(2,queue.length)},()=>worker());await Promise.all(workers);setBatch(current=>({...current,running:false,currentIds:[]}));setStatus(batchStopRef.current?"Batch analysis stopped after the current requests.":"Batch recipe analysis finished. Review any failures below.")
+
+    const finishVideo=(video:Video,ok:boolean,error:string)=>{
+      if(runId!==batchRunIdRef.current)return;
+      if(batchCompletedIdsRef.current.has(video.id))return;
+
+      batchCompletedIdsRef.current.add(video.id);
+
+      setBatch(current=>{
+        const completed=Math.min(current.total,current.completed+1);
+        const success=Math.min(current.total,current.success+(ok?1:0));
+        const failed=Math.min(current.total,current.failed+(ok?0:1));
+        const failures=ok||current.failures.some(item=>item.videoId===video.id)
+          ? current.failures
+          : [...current.failures,{videoId:video.id,title:video.title,error}];
+
+        return{
+          ...current,
+          completed,
+          success,
+          failed,
+          currentIds:current.currentIds.filter(id=>id!==video.id),
+          failures
+        };
+      });
+    };
+
+    const worker=async()=>{
+      while(true){
+        if(batchStopRef.current||runId!==batchRunIdRef.current)return;
+
+        const index=nextIndex++;
+        if(index>=queue.length)return;
+
+        const video=queue[index];
+
+        setBatch(current=>({
+          ...current,
+          currentIds:current.currentIds.includes(video.id)
+            ? current.currentIds
+            : [...current.currentIds,video.id]
+        }));
+
+        let ok=false,error="";
+
+        try{
+          const response=await fetch("/api/reel-video-recipe",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes,source:video.source}})
+          });
+
+          const result=await response.json() as {
+            analysis?:{message?:string;error?:string};
+            recipe?:Recipe|null;
+            error?:string
+          };
+
+          if(result.recipe){
+            if(runId===batchRunIdRef.current)onRecipeSaved(video.id,result.recipe);
+            ok=true;
+          }else{
+            error=result.analysis?.error||result.error||result.analysis?.message||`No reliable recipe was generated (HTTP ${response.status}).`;
+          }
+        }catch(err){
+          error=err instanceof Error?err.message:"Analysis request failed";
+        }
+
+        finishVideo(video,ok,error);
+        await new Promise<void>(resolve=>window.setTimeout(resolve,25));
+      }
+    };
+
+    try{
+      const workers=Array.from({length:Math.min(2,queue.length)},()=>worker());
+      await Promise.all(workers);
+    }finally{
+      if(runId===batchRunIdRef.current){
+        batchRunningRef.current=false;
+        setBatch(current=>({
+          ...current,
+          running:false,
+          completed:Math.min(current.completed,current.total),
+          success:Math.min(current.success,current.total),
+          failed:Math.min(current.failed,current.total),
+          currentIds:[]
+        }));
+        setStatus(batchStopRef.current?"Batch analysis stopped after the current requests.":"Batch recipe analysis finished. Review any failures below.");
+      }
+    }
   }
 
-  function openWeeklyRecipeEditor(videoId:string){
-    const video=videos.find(item=>item.id===videoId);if(!video)return;
-    const recipe=video.recipe;
-    setManualRecipeVideoId(videoId);
-    setManualRecipeDraft({title:recipe?.title||video.title,servings:recipe?.servings||"",prepTime:recipe?.prepTime||"",ingredients:(recipe?.ingredients??[]).join("\n"),steps:(recipe?.steps??[]).join("\n"),notes:recipe?.notes||""});
-  }
-  function closeWeeklyRecipeEditor(){setManualRecipeVideoId(null);setManualRecipeDraft(null);setManualRecipeSaving(false)}
-  function saveWeeklyManualRecipe(){
-    const video=videos.find(item=>item.id===manualRecipeVideoId);if(!video||!manualRecipeDraft)return;
-    const ingredients=manualRecipeDraft.ingredients.split("\n").map(item=>item.trim()).filter(Boolean),steps=manualRecipeDraft.steps.split("\n").map(item=>item.trim()).filter(Boolean);
-    if(!ingredients.length){setStatus("Add at least one ingredient before saving the recipe.");return}
-    setManualRecipeSaving(true);
-    const updated:Recipe={title:manualRecipeDraft.title.trim()||video.title,ingredients,steps,notes:manualRecipeDraft.notes.trim(),servings:manualRecipeDraft.servings.trim(),prepTime:manualRecipeDraft.prepTime.trim(),extractedAt:video.recipe?.extractedAt||new Date().toISOString(),...(video.recipe?.source?{source:video.recipe.source}:{}),...(video.recipe?.evidence?.length?{evidence:video.recipe.evidence}:{})};
-    const wasFailure=batch.failures.some(item=>item.videoId===video.id);
-    onRecipeSaved(video.id,updated);
-    if(wasFailure)setBatch(current=>({...current,success:current.success+1,failed:Math.max(0,current.failed-1),failures:current.failures.filter(item=>item.videoId!==video.id)}));
-    setStatus(`${video.recipe?"Recipe changes":"Manual recipe"} saved for ${video.title}.`);
-    closeWeeklyRecipeEditor();
-  }
   async function retryWeeklyRecipe(videoId:string){
     const video=videos.find(item=>item.id===videoId);if(!video||singleRetryId||batch.running)return;
     setSingleRetryId(video.id);setStatus(`Retrying recipe analysis for ${video.title}…`);
@@ -202,10 +286,82 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
     finally{setSingleRetryId(null)}
   }
 
+  function openWeeklyRecipeEditor(videoId:string){
+    const video=videos.find(item=>item.id===videoId);
+    if(!video)return;
+
+    const recipe=video.recipe;
+    setManualRecipeVideoId(videoId);
+    setManualRecipeDraft({
+      title:recipe?.title||video.title,
+      servings:recipe?.servings||"",
+      prepTime:recipe?.prepTime||"",
+      ingredients:(recipe?.ingredients??[]).join("\n"),
+      steps:(recipe?.steps??[]).join("\n"),
+      notes:recipe?.notes||""
+    });
+  }
+
+  function closeWeeklyRecipeEditor(){
+    setManualRecipeVideoId(null);
+    setManualRecipeDraft(null);
+    setManualRecipeSaving(false);
+  }
+
+  function saveWeeklyManualRecipe(){
+    const video=videos.find(item=>item.id===manualRecipeVideoId);
+    if(!video||!manualRecipeDraft)return;
+
+    const ingredients=manualRecipeDraft.ingredients
+      .split("\n")
+      .map(item=>item.trim())
+      .filter(Boolean);
+
+    const steps=manualRecipeDraft.steps
+      .split("\n")
+      .map(item=>item.trim())
+      .filter(Boolean);
+
+    if(!ingredients.length){
+      setStatus("Add at least one ingredient before saving the recipe.");
+      return;
+    }
+
+    setManualRecipeSaving(true);
+
+    const updated:Recipe={
+      title:manualRecipeDraft.title.trim()||video.title,
+      ingredients,
+      steps,
+      notes:manualRecipeDraft.notes.trim(),
+      servings:manualRecipeDraft.servings.trim(),
+      prepTime:manualRecipeDraft.prepTime.trim(),
+      extractedAt:video.recipe?.extractedAt||new Date().toISOString(),
+      ...(video.recipe?.source?{source:video.recipe.source}:{}),
+      ...(video.recipe?.evidence?.length?{evidence:video.recipe.evidence}:{})
+    };
+
+    const wasFailure=batch.failures.some(item=>item.videoId===video.id);
+
+    onRecipeSaved(video.id,updated);
+
+    if(wasFailure){
+      setBatch(current=>({
+        ...current,
+        success:Math.min(current.total,current.success+1),
+        failed:Math.max(0,current.failed-1),
+        failures:current.failures.filter(item=>item.videoId!==video.id)
+      }));
+    }
+
+    setStatus(`${video.recipe?"Recipe changes":"Manual recipe"} saved for ${video.title}.`);
+    closeWeeklyRecipeEditor();
+  }
+
   async function generateGroceryList(){if(!activeSavedId){setStatus("Save the weekly menu first.");return}if(!allRecipesReady){setRecipeCheckOpen(true);setStatus("Every menu item needs a recipe before generating the grocery list.");return}setGroceryLoading(true);try{const menuItems=items.flatMap(item=>{const video=videos.find(v=>v.id===item.videoId);if(!video?.recipe)return[];return[{schedule:`${item.day} · ${item.slot}`,videoId:video.id,title:video.recipe.title||video.title,ingredients:video.recipe.ingredients}]});const response=await fetch("/api/grocery-list",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({menuItems})});if(!response.ok)throw new Error();const result=await response.json() as GroceryListResult;setGroceryList(result);setStatus("Weekly grocery list generated.")}catch{setStatus("Could not generate the grocery list. Please try again.")}finally{setGroceryLoading(false)}}
   async function copyGroceryList(){if(!groceryList)return;const text=["Weekly Grocery List","",...groceryList.menuItems.flatMap(item=>[`${item.schedule} — ${item.title}`,...item.ingredients.map(ingredient=>`  • ${ingredient}`),""]),"SUMMARY",...groceryList.summary.map(item=>`• ${item.item}${item.quantity?` — ${item.quantity}`:""}`)].join("\n");try{await navigator.clipboard.writeText(text);setStatus("Grocery list copied.")}catch{setStatus("Could not copy the grocery list.")}}
 
-  const progress=batch.total?Math.round(batch.completed/batch.total*100):0;
+  const progress=batch.total?Math.min(100,Math.round(batch.completed/batch.total*100)):0;
 
   return <div className="dialog weekly-menu-dialog">
     <button className="dialog-close" onClick={onClose}>×</button>
