@@ -4,6 +4,7 @@ export const maxDuration = 300;
 
 // REELRECALL_FACEBOOK_CANONICAL_OCR_V4
 type Source = "Instagram" | "Facebook" | "YouTube";
+type RetryMode = "auto" | "audio" | "video";
 type VideoInput = { url: string; title: string; notes: string; source: Source };
 type RecipeResult = {
   available:boolean;
@@ -1288,8 +1289,9 @@ export async function POST(request:NextRequest){
   }
 
   try{
-    const body=await request.json() as {video?:VideoInput};
+    const body=await request.json() as {video?:VideoInput;retryMode?:RetryMode};
     const video=body.video;
+    const retryMode:RetryMode=body.retryMode==="audio"||body.retryMode==="video"?body.retryMode:"auto";
 
     if(
       !video?.url||
@@ -1381,6 +1383,7 @@ export async function POST(request:NextRequest){
           source:video.source,
           title:video.title,
           url:video.url,
+          retryMode,
           extractedEvidence:evidenceText
         })
       }
@@ -1415,6 +1418,7 @@ export async function POST(request:NextRequest){
                   type:"input_text",
                   text:
                     "Create a cooking recipe only from evidence extracted from the selected reel: narration, on-screen text/OCR, caption, and preview image. "+
+                    "When retryMode is 'audio', prioritize spoken narration/transcript over caption and OCR. When retryMode is 'video', prioritize on-screen OCR/frame evidence over narration. When retryMode is 'auto', combine all available evidence. "+
                     "Do not invent exact quantities, temperatures, cooking times, or ingredients. "+
                     "If an ingredient or action is clear but its amount is absent, use 'amount not specified'. "+
                     "Preserve the sequence of preparation steps. "+
