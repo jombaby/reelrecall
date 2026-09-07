@@ -347,3 +347,12 @@ header{height:84px;padding:0 max(24px,5vw);display:flex;align-items:center;justi
 .recipe-backdrop .recipe-dialog{position:relative;z-index:10101;}
 .weekly-manual-recipe-backdrop{z-index:10200 !important;}
 .weekly-manual-recipe-panel{position:relative;z-index:10201;}
+
+
+/* ReelRecall card Edit clickability fix */
+.recipe-card{position:relative;}
+.recipe-card .card-body{position:relative;z-index:20;}
+.recipe-card .card-actions{position:relative;z-index:50;pointer-events:auto;}
+.recipe-card .card-actions button,.recipe-card .card-actions a{position:relative;z-index:51;pointer-events:auto;}
+.video-card-edit-action{position:relative;z-index:60;pointer-events:auto!important;cursor:pointer;}
+.recipe-card iframe,.recipe-card .facebook-embed,.recipe-card .instagram-embed{position:relative;z-index:1;}
