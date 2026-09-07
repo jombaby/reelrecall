@@ -495,6 +495,24 @@ function buildLocalGrocerySummary(menuItems:GroceryListMenuItem[]){
     .map(group=>({item:group.item,quantity:mergeGroceryQuantities(group.quantities),usedBy:[...group.usedBy]}))
     .sort((a,b)=>a.item.localeCompare(b.item));
 }
+function finalClientGroceryDedupe(summary:GrocerySummaryItem[]){
+  const groups=new Map<string,{item:string;quantities:string[];usedBy:Set<string>}>();
+  for(const row of summary){
+    const canonical=canonicalGroceryItem(row.item);
+    if(!canonical)continue;
+    const key=canonical.toLowerCase();
+    const current=groups.get(key)??{item:canonical,quantities:[],usedBy:new Set<string>()};
+    const quantity=cleanGroceryQuantity(row.quantity).replace(/^as listed in recipes$/i,"").trim();
+    if(quantity)current.quantities.push(quantity);
+    for(const usedBy of row.usedBy??[])if(usedBy?.trim())current.usedBy.add(usedBy.trim());
+    groups.set(key,current);
+  }
+  return[...groups.values()].map(group=>{
+    const merged=mergeGroceryQuantities(group.quantities);
+    const fallback=group.quantities.some(value=>/^see recipes$/i.test(value))?"See recipes":group.quantities.length>1?"See recipes":group.quantities[0]??"";
+    return{item:group.item,quantity:merged||fallback,usedBy:[...group.usedBy]};
+  }).sort((a,b)=>a.item.localeCompare(b.item));
+}
 
 function WeeklyMenuThumb({item}:{item:WeeklyMenuItem}){
   const[thumbnail,setThumbnail]=useState<string|null>(null),[failed,setFailed]=useState(false);
@@ -731,10 +749,17 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
         const video=videos.find(v=>v.id===item.videoId),recipe=video?.recipe??null;
         return{schedule:`${item.day} · ${item.slot}`,videoId:item.videoId,title:recipe?.title||video?.title||item.title,ingredients:recipe?.ingredients??[],recipeMissing:!recipe};
       });
-      const summary=buildLocalGrocerySummary(menuItems);
-      const generatedAt=new Date().toISOString();
-      const missingCount=menuItems.filter(item=>item.recipeMissing).length;
-      setGroceryList({menuItems,summary,aisleGroups:groupGrocerySummaryByAisle(summary),generatedAt});
+      const response=await fetch("/api/grocery-list",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({menuItems})});
+      if(response.status===401){location.href="/sign-in";return}
+      if(!response.ok)throw new Error(`Grocery API returned HTTP ${response.status}`);
+      const result=await response.json() as {menuItems?:GroceryListMenuItem[];summary?:GrocerySummaryItem[];generatedAt?:string};
+      const apiSummary=Array.isArray(result.summary)?finalClientGroceryDedupe(result.summary):[];
+      const localFallback=finalClientGroceryDedupe(buildLocalGrocerySummary(menuItems));
+      const summary=apiSummary.length?apiSummary:localFallback;
+      const finalMenuItems=Array.isArray(result.menuItems)&&result.menuItems.length?result.menuItems:menuItems;
+      const generatedAt=result.generatedAt||new Date().toISOString();
+      const missingCount=finalMenuItems.filter(item=>item.recipeMissing).length;
+      setGroceryList({menuItems:finalMenuItems,summary,aisleGroups:groupGrocerySummaryByAisle(summary),generatedAt});
       setStatus(missingCount?`Grocery list generated. ${missingCount} menu item${missingCount===1?" is":"s are"} missing recipes and are clearly marked.`:"Weekly grocery list generated.");
     }catch{setStatus("Could not generate the grocery list. Please try again.")}finally{setGroceryLoading(false)}
   }
