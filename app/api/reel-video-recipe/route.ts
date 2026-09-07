@@ -77,61 +77,42 @@ function rowError(row:ActorRow){
 
 // REELRECALL_FACEBOOK_WORKING_RESOLVER_RESTORED_V6
 async function resolveFacebookCanonicalUrl(rawUrl:string){
-  try{
-    const original=new URL(rawUrl);
-
-    const clean=(value:string)=>{
-      try{
-        const u=new URL(value);
-        u.hash="";
-        ["mibextid","fbclid","utm_source","utm_medium","utm_campaign","utm_content"].forEach(k=>u.searchParams.delete(k));
-        const reelId=u.pathname.match(/\/reel\/(\d+)/i)?.[1];
-        if(reelId)return `https://www.facebook.com/reel/${reelId}`;
-        if(u.hostname==="m.facebook.com")u.hostname="www.facebook.com";
-        return u.toString().replace(/\?$/,"").replace(/\/$/,"");
-      }catch{return value}
-    };
-
-    const directId=original.pathname.match(/\/reel\/(\d+)/i)?.[1];
-    if(directId)return `https://www.facebook.com/reel/${directId}`;
-
-    const response=await fetch(rawUrl,{
-      method:"GET",
-      redirect:"follow",
-      cache:"no-store",
-      signal:AbortSignal.timeout(15000),
-      headers:{
-        "User-Agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1",
-        "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language":"en-US,en;q=0.9"
-      }
-    });
-
-    const redirected=clean(response.url);
-    if(/facebook\.com\/reel\/\d+/i.test(redirected))return redirected;
-
-    const html=(await response.text()).slice(0,1500000);
-
-    const canonical=
-      html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1] ??
-      html.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i)?.[1] ??
-      "";
-
-    if(canonical){
-      const normalized=clean(canonical.replace(/\\\//g,"/"));
-      if(/facebook\.com\/reel\/\d+/i.test(normalized))return normalized;
-    }
-
-    const escapedId=html.match(/facebook\\?\.com\\?\/reel\\?\/(\d+)/i)?.[1];
-    if(escapedId)return `https://www.facebook.com/reel/${escapedId}`;
-
-    const plainId=html.match(/facebook\.com\/reel\/(\d+)/i)?.[1];
-    if(plainId)return `https://www.facebook.com/reel/${plainId}`;
-
-    return clean(rawUrl);
-  }catch{
-    return rawUrl;
+  const clean=(value:string)=>{
+    try{
+      const u=new URL(value);
+      u.protocol="https:";
+      if(u.hostname==="m.facebook.com"||u.hostname==="facebook.com")u.hostname="www.facebook.com";
+      u.hash="";
+      const reelId=u.pathname.match(/\/reels?\/([A-Za-z0-9._-]+)/i)?.[1];
+      if(reelId)return `https://www.facebook.com/reel/${reelId}`;
+      const pathVideoId=u.pathname.match(/\/videos\/(\d+)/i)?.[1];
+      if(pathVideoId)return `https://www.facebook.com/watch/?v=${pathVideoId}`;
+      const watchId=u.searchParams.get("v");
+      if(watchId&&/^\d+$/.test(watchId))return `https://www.facebook.com/watch/?v=${watchId}`;
+      ["mibextid","wa_status_inline","fbclid","utm_source","utm_medium","utm_campaign","utm_content","share_url","sfnsn","rdid"].forEach(key=>u.searchParams.delete(key));
+      return u.toString().replace(/\?$/,"").replace(/\/$/,"");
+    }catch{return value}
+  };
+  const isResolvedFacebookVideo=(value:string)=>/facebook\.com\/reel\/[^/?#]+/i.test(value)||/facebook\.com\/watch\/?\?v=\d+/i.test(value)||/facebook\.com\/videos\/\d+/i.test(value);
+  const original=clean(rawUrl);
+  if(isResolvedFacebookVideo(original))return original;
+  const candidates=[rawUrl,rawUrl.replace("www.facebook.com","m.facebook.com"),rawUrl.includes("www.facebook.com")?rawUrl.replace("www.facebook.com","facebook.com"):rawUrl.replace("facebook.com","www.facebook.com")].filter((value,index,array)=>value&&array.indexOf(value)===index);
+  for(const candidate of candidates){
+    try{
+      const response=await fetch(candidate,{method:"GET",redirect:"follow",cache:"no-store",signal:AbortSignal.timeout(15000),headers:{"User-Agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9"}});
+      const redirected=clean(response.url||candidate);
+      if(isResolvedFacebookVideo(redirected)){console.log("[facebook-url-resolver]",rawUrl,"->",redirected);return redirected}
+      const html=(await response.text()).slice(0,1500000);
+      const canonical=html.match(/<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)["\']/i)?.[1]??html.match(/<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']/i)?.[1]??"";
+      if(canonical){const normalized=clean(canonical.replace(/\\\//g,"/"));if(isResolvedFacebookVideo(normalized)){console.log("[facebook-url-resolver]",rawUrl,"->",normalized);return normalized}}
+      const reelId=html.match(/facebook\\?\.com\\?\/reels?\\?\/([A-Za-z0-9._-]+)/i)?.[1]||html.match(/facebook\.com\/reels?\/([A-Za-z0-9._-]+)/i)?.[1];
+      if(reelId){const resolved=`https://www.facebook.com/reel/${reelId}`;console.log("[facebook-url-resolver]",rawUrl,"->",resolved);return resolved}
+      const watchUrlId=html.match(/facebook\.com\/watch\/?\?v=(\d+)/i)?.[1]||html.match(/watch\/?\?v=(\d+)/i)?.[1];
+      const videoId=watchUrlId||html.match(/"video_id"\s*:\s*"(\d+)"/i)?.[1]||html.match(/"video_id"\s*:\s*(\d+)/i)?.[1]||html.match(/"videoID"\s*:\s*"(\d+)"/i)?.[1]||html.match(/"videoId"\s*:\s*"(\d+)"/i)?.[1]||html.match(/\/videos\/(\d+)/i)?.[1];
+      if(videoId){const resolved=`https://www.facebook.com/watch/?v=${videoId}`;console.log("[facebook-url-resolver]",rawUrl,"->",resolved);return resolved}
+    }catch(error){console.warn("[facebook-url-resolver]",candidate,error instanceof Error?error.message:"resolution failed")}
   }
+  return original;
 }
 
 function normalizeOcrText(value:string){
