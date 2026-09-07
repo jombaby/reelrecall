@@ -356,3 +356,27 @@ header{height:84px;padding:0 max(24px,5vw);display:flex;align-items:center;justi
 .recipe-card .card-actions button,.recipe-card .card-actions a{position:relative;z-index:51;pointer-events:auto;}
 .video-card-edit-action{position:relative;z-index:60;pointer-events:auto!important;cursor:pointer;}
 .recipe-card iframe,.recipe-card .facebook-embed,.recipe-card .instagram-embed{position:relative;z-index:1;}
+
+
+/* Recipe Protection + Food Recipe Audit */
+.recipe-audit-backdrop{z-index:10500!important}
+.recipe-audit-dialog{width:min(900px,96vw);max-width:none;max-height:92vh;overflow:auto;z-index:10501}
+.recipe-audit-summary{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:14px 0}
+.recipe-audit-summary>*{padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:#f8f8f3;font-size:12px}
+.recipe-audit-summary strong{font-size:14px}
+.recipe-audit-current{font-size:12px;color:var(--muted);margin:8px 0}
+.recipe-audit-results{display:grid;gap:7px;margin-top:14px;max-height:46vh;overflow:auto}
+.recipe-audit-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:white}
+.recipe-audit-row strong{font-size:13px}
+.recipe-audit-row>span{text-transform:uppercase;font-size:10px;font-weight:900;letter-spacing:.06em;color:var(--muted)}
+.recipe-audit-row small{grid-column:1/-1;color:var(--muted);line-height:1.35}
+.recipe-audit-row.upgraded,.recipe-audit-row.added{background:#f2f7ed}
+.recipe-audit-row.failed{background:#fff2ef}
+.recipe-audit-row.protected{background:#f3f1fb}
+.recipe-history{margin:14px 0;border:1px solid var(--line);border-radius:12px;background:#fafaf6}
+.recipe-history summary{cursor:pointer;padding:11px 13px;font-weight:800}
+.recipe-history-list{display:grid;gap:7px;padding:0 10px 10px}
+.recipe-history-row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:9px;border:1px solid var(--line);border-radius:9px;background:white}
+.recipe-history-row>div{display:grid;gap:2px}
+.recipe-history-row small,.recipe-history-row span{color:var(--muted);font-size:10px}
+.recipe-history-row button{border:1px solid var(--line);border-radius:999px;padding:7px 10px;background:white;font-weight:800}
