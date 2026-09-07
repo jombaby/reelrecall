@@ -236,6 +236,119 @@ function groupGrocerySummaryByAisle(summary:GrocerySummaryItem[]){
 }
 
 
+const GROCERY_UNICODE_FRACTIONS:Record<string,number>={"¼":.25,"½":.5,"¾":.75,"⅓":1/3,"⅔":2/3,"⅛":.125,"⅜":.375,"⅝":.625,"⅞":.875};
+
+function groceryNumber(raw:string){
+  const value=raw.trim();
+  if(!value)return null;
+  if(value in GROCERY_UNICODE_FRACTIONS)return GROCERY_UNICODE_FRACTIONS[value];
+  const mixed=value.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+  if(mixed)return Number(mixed[1])+Number(mixed[2])/Number(mixed[3]);
+  const fraction=value.match(/^(\d+)\/(\d+)$/);
+  if(fraction)return Number(fraction[1])/Number(fraction[2]);
+  const parsed=Number(value);
+  return Number.isFinite(parsed)?parsed:null;
+}
+function cleanGroceryQuantity(raw:string){
+  return raw.replace(/\s+/g," ").replace(/^[-–—,:;\s]+|[-–—,:;\s]+$/g,"").trim();
+}
+function splitGroceryItemQuantity(rawItem:string,explicitQuantity:string){
+  let item=rawItem.replace(/\s+/g," ").trim(),embedded="";
+  const num='(?:\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])';
+  const unit='(?:cups?|cup|tbsp|tablespoons?|tsp|teaspoons?|lbs?|pounds?|oz|ounces?|kgs?|kilograms?|grams?|g|ml|milliliters?|liters?|litres?|l|cloves?|cans?|packages?|packs?|pieces?|pcs?|bunches?|bunch)';
+  const leading=new RegExp(`^\\s*(${num})\\s*(${unit})?\\b\\s*(.+)$`,"i");
+  const trailing=new RegExp(`^(.+?)\\s*[-–—,:]?\\s+(${num})\\s*(${unit})?\\s*$`,"i");
+  const lead=item.match(leading),tail=item.match(trailing);
+  if(lead){embedded=cleanGroceryQuantity(`${lead[1]}${lead[2]?` ${lead[2]}`:""}`);item=lead[3].trim()}
+  else if(tail){item=tail[1].trim();embedded=cleanGroceryQuantity(`${tail[2]}${tail[3]?` ${tail[3]}`:""}`)}
+  return{item,quantity:cleanGroceryQuantity(explicitQuantity)||embedded};
+}
+function canonicalGroceryItem(raw:string){
+  let item=raw.toLowerCase()
+    .replace(/[()]/g," ")
+    .replace(/\b(?:large|medium|small|extra large|xl|fresh|finely|roughly|thinly|thickly|chopped|diced|minced|sliced|grated|shredded|crushed|peeled|trimmed|divided|optional|to taste|for garnish|for serving)\b/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+
+  if(/\beggs?\b/.test(item)&&!/(eggplant|egg noodle)/.test(item))return"Eggs";
+  if(/\bchicken\s+breasts?\b/.test(item))return"Chicken Breast";
+  if(/\bchicken\s+thighs?\b/.test(item))return"Chicken Thigh";
+  if(/^garlic(?:\s+cloves?)?$/.test(item))return"Garlic";
+  if(/^onions?$/.test(item))return"Onion";
+  if(/^tomatoes?$/.test(item))return"Tomato";
+  if(/^potatoes?$/.test(item))return"Potato";
+  if(/^carrots?$/.test(item))return"Carrot";
+  if(/^(?:bell\s+)?peppers?$/.test(item))return item.startsWith("bell")?"Bell Pepper":"Pepper";
+  if(/^lemons?$/.test(item))return"Lemon";
+  if(/^limes?$/.test(item))return"Lime";
+  if(/^avocados?$/.test(item))return"Avocado";
+  if(/^cucumbers?$/.test(item))return"Cucumber";
+  if(/^mushrooms?$/.test(item))return"Mushroom";
+  if(/^bananas?$/.test(item))return"Banana";
+  if(/^apples?$/.test(item))return"Apple";
+
+  return item.split(" ").filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(" ")||raw.trim();
+}
+function groceryMeasurement(raw:string){
+  const value=cleanGroceryQuantity(raw).toLowerCase();
+  if(!value)return null;
+  const match=value.match(/^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]))(?:\s*)(.*)$/);
+  if(!match)return null;
+  const amount=groceryNumber(match[1]);
+  if(amount==null)return null;
+  const unit=match[2].trim().replace(/\.$/,"");
+  if(!unit)return{amount,kind:"count" as const,base:amount,label:""};
+  if(/^(?:lb|lbs|pound|pounds)$/.test(unit))return{amount,kind:"weight" as const,base:amount*16,label:"oz"};
+  if(/^(?:oz|ounce|ounces)$/.test(unit))return{amount,kind:"weight" as const,base:amount,label:"oz"};
+  if(/^(?:cup|cups)$/.test(unit))return{amount,kind:"volume" as const,base:amount*48,label:"tsp"};
+  if(/^(?:tbsp|tablespoon|tablespoons)$/.test(unit))return{amount,kind:"volume" as const,base:amount*3,label:"tsp"};
+  if(/^(?:tsp|teaspoon|teaspoons)$/.test(unit))return{amount,kind:"volume" as const,base:amount,label:"tsp"};
+  return{amount,kind:`unit:${unit}` as const,base:amount,label:unit};
+}
+function formatGroceryNumber(value:number){
+  const rounded=Math.round(value*100)/100;
+  return Number.isInteger(rounded)?String(rounded):String(rounded).replace(/\.00$/,"" ).replace(/(\.\d*[1-9])0+$/,"$1");
+}
+function mergeGroceryQuantities(values:string[]){
+  const cleaned=values.map(cleanGroceryQuantity).filter(Boolean);
+  if(!cleaned.length)return"";
+  const parsed=cleaned.map(groceryMeasurement);
+  if(parsed.every(Boolean)){
+    const measurements=parsed.filter((item):item is NonNullable<ReturnType<typeof groceryMeasurement>>=>Boolean(item));
+    const kinds=[...new Set(measurements.map(item=>item.kind))];
+    if(kinds.length===1){
+      const kind=kinds[0],total=measurements.reduce((sum,item)=>sum+item.base,0);
+      if(kind==="count")return formatGroceryNumber(total);
+      if(kind==="weight"){
+        const pounds=Math.floor(total/16),ounces=Math.round((total-pounds*16)*100)/100;
+        return pounds&&ounces?`${pounds} lb ${formatGroceryNumber(ounces)} oz`:pounds?`${pounds} lb`:`${formatGroceryNumber(ounces)} oz`;
+      }
+      if(kind==="volume"){
+        const cups=Math.floor(total/48),afterCups=total-cups*48,tbsp=Math.floor(afterCups/3),tsp=Math.round((afterCups-tbsp*3)*100)/100;
+        return [cups?`${cups} cup${cups===1?"":"s"}`:"",tbsp?`${tbsp} tbsp`:"",tsp?`${formatGroceryNumber(tsp)} tsp`:""].filter(Boolean).join(" ");
+      }
+      return `${formatGroceryNumber(total)} ${measurements[0].label}`.trim();
+    }
+  }
+  return [...new Set(cleaned.map(value=>value.toLowerCase()))].map(value=>cleaned.find(item=>item.toLowerCase()===value)??value).join(" + ");
+}
+function consolidateGrocerySummary(summary:GrocerySummaryItem[]){
+  const groups=new Map<string,{item:string;quantities:string[];usedBy:Set<string>}>();
+  for(const row of summary){
+    const split=splitGroceryItemQuantity(row.item,row.quantity||"");
+    const canonical=canonicalGroceryItem(split.item);
+    const key=canonical.toLowerCase();
+    const current=groups.get(key)??{item:canonical,quantities:[],usedBy:new Set<string>()};
+    if(split.quantity)current.quantities.push(split.quantity);
+    for(const use of row.usedBy??[])if(use)current.usedBy.add(use);
+    groups.set(key,current);
+  }
+  return [...groups.values()]
+    .map(group=>({item:group.item,quantity:mergeGroceryQuantities(group.quantities),usedBy:[...group.usedBy]}))
+    .sort((a,b)=>a.item.localeCompare(b.item));
+}
+
+
 function WeeklyMenuThumb({item}:{item:WeeklyMenuItem}){
   const[thumbnail,setThumbnail]=useState<string|null>(null),[failed,setFailed]=useState(false);
   useEffect(()=>{let active=true;setThumbnail(null);setFailed(false);fetch(`/api/thumbnail?url=${encodeURIComponent(item.url)}`).then(r=>r.ok?r.json():Promise.reject()).then((data:{thumbnail?:string})=>{if(active&&data.thumbnail)setThumbnail(data.thumbnail)}).catch(()=>{if(active)setFailed(true)});return()=>{active=false}},[item.url]);
@@ -477,7 +590,7 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
         const response=await fetch("/api/grocery-list",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({menuItems:knownItems.map(({schedule,videoId,title,ingredients})=>({schedule,videoId,title,ingredients}))})});
         if(!response.ok)throw new Error();
         const result=await response.json() as {summary?:GrocerySummaryItem[];generatedAt?:string};
-        summary=Array.isArray(result.summary)?result.summary:[];generatedAt=result.generatedAt||generatedAt;
+        summary=consolidateGrocerySummary(Array.isArray(result.summary)?result.summary:[]);generatedAt=result.generatedAt||generatedAt;
       }
       const missingCount=menuItems.filter(item=>item.recipeMissing).length;
       setGroceryList({menuItems,summary,aisleGroups:groupGrocerySummaryByAisle(summary),generatedAt});
