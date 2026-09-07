@@ -80,6 +80,21 @@ function VideoCard({video,playing,onPlay,onEdit,onDelete,onFavorite,onStatus,onR
 }
 
 
+const WEEKLY_RETRY_TIMEOUT_MS=75000;
+
+async function fetchWithWeeklyRetryTimeout(
+  input:Parameters<typeof fetch>[0],
+  init?:Parameters<typeof fetch>[1]
+){
+  const controller=new AbortController();
+  const timer=window.setTimeout(()=>controller.abort(),WEEKLY_RETRY_TIMEOUT_MS);
+  try{
+    return await fetch(input,{...(init??{}),signal:controller.signal});
+  }finally{
+    window.clearTimeout(timer);
+  }
+}
+
 const WEEKLY_MENU_DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"] as const;
 const WEEKLY_MENU_SLOTS:WeeklyMenuSlot[]=["Breakfast","Lunch","Entrée","Snack","Drink"];
 
@@ -276,13 +291,16 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
 
   async function retryWeeklyRecipe(videoId:string){
     const video=videos.find(item=>item.id===videoId);if(!video||singleRetryId||batch.running)return;
-    setSingleRetryId(video.id);setStatus(`Retrying recipe analysis for ${video.title}…`);
+    setSingleRetryId(video.id);setStatus(`Retrying recipe analysis for ${video.title}… This retry will stop automatically after 75 seconds.`);
     try{
-      const response=await fetch("/api/reel-video-recipe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes,source:video.source}})});
+      const response=await fetchWithWeeklyRetryTimeout("/api/reel-video-recipe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes,source:video.source}})});
       const result=await response.json() as {analysis?:{message?:string;error?:string};recipe?:Recipe|null;error?:string};
       if(result.recipe){onRecipeSaved(video.id,result.recipe);setBatch(current=>({...current,success:current.success+1,failed:Math.max(0,current.failed-(current.failures.some(item=>item.videoId===video.id)?1:0)),failures:current.failures.filter(item=>item.videoId!==video.id)}));setStatus(`Recipe added for ${video.title}.`)}
       else{const error=result.analysis?.error||result.error||result.analysis?.message||`No reliable recipe was generated (HTTP ${response.status}).`;setBatch(current=>({...current,failures:current.failures.some(item=>item.videoId===video.id)?current.failures.map(item=>item.videoId===video.id?{...item,error}:item):[...current.failures,{videoId:video.id,title:video.title,error}]}));setStatus(`AI still could not build a recipe for ${video.title}. You can add it manually.`)}
-    }catch(err){const error=err instanceof Error?err.message:"Analysis request failed";setBatch(current=>({...current,failures:current.failures.some(item=>item.videoId===video.id)?current.failures.map(item=>item.videoId===video.id?{...item,error}:item):[...current.failures,{videoId:video.id,title:video.title,error}]}));setStatus(`Retry failed for ${video.title}. You can add the recipe manually.`)}
+    }catch(err){const timedOut=err instanceof DOMException&&err.name==="AbortError";
+      const error=timedOut
+        ?"Retry timed out after 75 seconds. The reel service did not return quickly enough."
+        :err instanceof Error?err.message:"Analysis request failed";setBatch(current=>({...current,failures:current.failures.some(item=>item.videoId===video.id)?current.failures.map(item=>item.videoId===video.id?{...item,error}:item):[...current.failures,{videoId:video.id,title:video.title,error}]}));setStatus(`Retry failed for ${video.title}. You can add the recipe manually.`)}
     finally{setSingleRetryId(null)}
   }
 
