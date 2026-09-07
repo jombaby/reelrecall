@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const maxDuration = 300;
 
 // REELRECALL_FACEBOOK_CANONICAL_OCR_V4
-type Source = "Instagram" | "Facebook";
+type Source = "Instagram" | "Facebook" | "YouTube";
 type VideoInput = { url: string; title: string; notes: string; source: Source };
 type RecipeResult = {
   available:boolean;
@@ -1122,6 +1122,156 @@ async function readFrameTextWithOpenAI(frames:string[]){
   };
 }
 
+
+async function youtubeEvidence(video:VideoInput){
+  const actor=
+    process.env.APIFY_YOUTUBE_VIDEO_ACTOR||
+    "eunit/youtube-video-downloader";
+
+  const rows=await runActor(actor,{
+    startUrls:[{url:video.url}],
+    maxVideos:1,
+    preferredQuality:"720p",
+    preferredContainer:"mp4",
+    includeProgressiveFormats:true,
+    includeAdaptiveFormats:false,
+    downloadMode:"metadata-only",
+    includeTranscript:true,
+    maxDownloadSizeMb:80
+  },150);
+
+  const row=rows[0]||{};
+  const actorError=rowError(row);
+
+  const textFromUnknown=(value:unknown):string=>{
+    if(typeof value==="string")return value.trim();
+
+    if(Array.isArray(value)){
+      return value
+        .map(item=>{
+          if(typeof item==="string")return item.trim();
+          if(item&&typeof item==="object"){
+            const record=item as Record<string,unknown>;
+            return firstText(record,["text","caption","content","transcript"]);
+          }
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+
+    if(value&&typeof value==="object"){
+      const record=value as Record<string,unknown>;
+      return firstText(record,[
+        "text",
+        "transcript",
+        "transcriptText",
+        "singleStringText",
+        "content"
+      ]);
+    }
+
+    return"";
+  };
+
+  const caption=firstText(row,[
+    "description",
+    "caption",
+    "title"
+  ]);
+
+  const transcript=
+    textFromUnknown(row["transcript"])||
+    textFromUnknown(row["captions"])||
+    textFromUnknown(row["subtitles"]);
+
+  const thumbnail=firstUrl(row,[
+    "thumbnailUrl",
+    "thumbnail",
+    "imageUrl"
+  ]);
+
+  const formats=Array.isArray(row["formats"])
+    ? row["formats"].filter(
+        (item):item is Record<string,unknown>=>
+          Boolean(item&&typeof item==="object")
+      )
+    : [];
+
+  const progressive=formats
+    .filter(format=>{
+      const streamType=asText(format["streamType"]).toLowerCase();
+      const container=asText(format["container"]).toLowerCase();
+      return(!streamType||streamType==="progressive")&&(!container||container==="mp4");
+    })
+    .sort((a,b)=>{
+      const quality=(format:Record<string,unknown>)=>{
+        const raw=asText(format["qualityLabel"]);
+        const value=Number(raw.match(/(\d+)/)?.[1]||0);
+        return Number.isFinite(value)?value:0;
+      };
+      return quality(b)-quality(a);
+    });
+
+  const selectedDownload=
+    row["selectedDownload"]&&typeof row["selectedDownload"]==="object"
+      ? row["selectedDownload"] as Record<string,unknown>
+      : {};
+
+  const directVideoUrl=
+    firstUrl(selectedDownload,["publicUrl","downloadUrl","url"])||
+    firstUrl(progressive[0]||{},["downloadUrl","url","videoUrl"]);
+
+  const standardFrames=directVideoUrl
+    ? await sampleVideoFrames(directVideoUrl)
+    : [];
+
+  const lateSceneFrames=directVideoUrl
+    ? await sampleLateRecipeSceneFrames(directVideoUrl)
+    : [];
+
+  const frames=[
+    ...standardFrames,
+    ...lateSceneFrames
+  ].slice(0,36);
+
+  if(!caption&&!transcript&&!frames.length){
+    throw new Error(
+      actorError||
+      "YouTube Short returned no usable description, transcript, or video frames"
+    );
+  }
+
+  return{
+    caption,
+    transcript,
+    onScreenText:"",
+    thumbnail,
+    frames,
+    diagnostics:{
+      resolvedFacebookUrl:"",
+      directMp4Found:Boolean(directVideoUrl),
+      standardFrameCount:standardFrames.length,
+      lateSceneFrameCount:lateSceneFrames.length,
+      totalOcrFrameCount:frames.length,
+      ocrBatchesAttempted:0,
+      ocrBatchesWithText:0,
+      ocrFramesRetriedIndividually:0,
+      ocrRetryFramesWithText:0,
+      rawOcrText:"",
+      consolidatedOcrText:""
+    },
+    evidence:[
+      transcript?"YouTube spoken transcript":"",
+      caption?"YouTube Short description":"",
+      thumbnail?"YouTube thumbnail":"",
+      directVideoUrl?"Direct YouTube media URL":"",
+      standardFrames.length?"YouTube video frames for AI OCR":"",
+      lateSceneFrames.length?"Late YouTube ingredient scenes for AI OCR":""
+    ].filter(Boolean)
+  };
+}
+
 export async function POST(request:NextRequest){
   if(!process.env.OPENAI_API_KEY){
     return NextResponse.json(
@@ -1144,10 +1294,10 @@ export async function POST(request:NextRequest){
     if(
       !video?.url||
       !video.title||
-      !["Facebook","Instagram"].includes(video.source)
+      !["Facebook","Instagram","YouTube"].includes(video.source)
     ){
       return NextResponse.json(
-        {error:"A Facebook or Instagram reel is required"},
+        {error:"A Facebook, Instagram, or YouTube video is required"},
         {status:400}
       );
     }
@@ -1155,7 +1305,9 @@ export async function POST(request:NextRequest){
     const media=
       video.source==="Instagram"
         ? await instagramEvidence(video)
-        : await facebookEvidence(video);
+        : video.source==="YouTube"
+          ? await youtubeEvidence(video)
+          : await facebookEvidence(video);
 
     // First pass: OCR the sampled frames only. This AUGMENTS caption/transcript;
     // it never replaces them.
