@@ -555,13 +555,21 @@ try{result=await response.json()}catch{result={error:`Analysis service returned 
         }
 
         try{
-          const response=await fetch("/api/recipe",{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes}})
-          });
-
-          const result=await response.json() as {recipe?:Recipe|null;descriptionFound?:boolean;facebookBlocked?:boolean;message?:string};
+          const controller=new AbortController();
+          const timeoutId=window.setTimeout(()=>controller.abort(),45000);
+          let response:Response;
+          let result:{recipe?:Recipe|null;descriptionFound?:boolean;facebookBlocked?:boolean;message?:string};
+          try{
+            response=await fetch("/api/recipe",{
+              method:"POST",
+              headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes}}),
+              signal:controller.signal
+            });
+            result=await response.json() as {recipe?:Recipe|null;descriptionFound?:boolean;facebookBlocked?:boolean;message?:string};
+          }finally{
+            window.clearTimeout(timeoutId);
+          }
 
           if(!response.ok){
             record(video,"failed",result.message||`Description check returned HTTP ${response.status}.`);
@@ -591,7 +599,10 @@ try{result=await response.json()}catch{result={error:`Analysis service returned 
             record(video,"kept",`Saved recipe kept (${current.ingredients.length} ingredients / ${current.steps.length} steps); description was not materially richer.`);
           }
         }catch(error){
-          record(video,"failed",error instanceof Error?error.message:"Description recipe check failed.");
+          const timedOut=error instanceof DOMException&&error.name==="AbortError";
+          record(video,"failed",timedOut
+            ?"Description check timed out after 45 seconds. Skipped so the audit could continue."
+            :error instanceof Error?error.message:"Description recipe check failed.");
         }
 
         await new Promise<void>(resolve=>window.setTimeout(resolve,40));
