@@ -110,3 +110,8 @@ The **🎥 Analyze Video** action analyzes the Facebook or Instagram reel URL al
 ## Weekly Menu
 
 Use **Weekly Menu** from the ReelRecall header to randomly build a Monday–Sunday meal plan from available videos in the Food category. The calendar fills Breakfast, Lunch, Entrée, Snack and Drink slots, avoids repeats when enough matching videos exist, and supports rerolling one meal or regenerating the entire week. Saved menus are stored in the existing Neon-backed ReelRecall library and can be loaded, renamed by editing the menu name and saving changes, or deleted.
+
+
+## Weekly Menu recipe readiness
+
+Food tiles show exactly one recipe action: Recipe when a recipe exists, otherwise Analyze Video. Saved weekly menus can check recipe readiness, batch-analyze only missing unique menu videos with two concurrent jobs and visible progress, show recipe icons on ready calendar cards, open/edit/save recipes, and generate a weekly grocery list once every menu video has a recipe.
