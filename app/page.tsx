@@ -752,14 +752,16 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
       const response=await fetch("/api/grocery-list",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({menuItems})});
       if(response.status===401){location.href="/sign-in";return}
       if(!response.ok)throw new Error(`Grocery API returned HTTP ${response.status}`);
-      const result=await response.json() as {menuItems?:GroceryListMenuItem[];summary?:GrocerySummaryItem[];generatedAt?:string};
-      const apiSummary=Array.isArray(result.summary)?finalClientGroceryDedupe(result.summary):[];
+      const result=await response.json() as {menuItems?:GroceryListMenuItem[];summary?:GrocerySummaryItem[];aisleGroups?:GroceryAisleGroup[];generatedAt?:string;normalizationVersion?:string};
+      const trustedServerSummary=result.normalizationVersion==="v4"&&Array.isArray(result.summary)?result.summary:[];
+      const apiSummary=trustedServerSummary.length?trustedServerSummary:(Array.isArray(result.summary)?finalClientGroceryDedupe(result.summary):[]);
       const localFallback=finalClientGroceryDedupe(buildLocalGrocerySummary(menuItems));
       const summary=apiSummary.length?apiSummary:localFallback;
       const finalMenuItems=Array.isArray(result.menuItems)&&result.menuItems.length?result.menuItems:menuItems;
       const generatedAt=result.generatedAt||new Date().toISOString();
       const missingCount=finalMenuItems.filter(item=>item.recipeMissing).length;
-      setGroceryList({menuItems:finalMenuItems,summary,aisleGroups:groupGrocerySummaryByAisle(summary),generatedAt});
+      const aisleGroups=result.normalizationVersion==="v4"&&Array.isArray(result.aisleGroups)&&result.aisleGroups.length?result.aisleGroups:groupGrocerySummaryByAisle(summary);
+      setGroceryList({menuItems:finalMenuItems,summary,aisleGroups,generatedAt});
       setStatus(missingCount?`Grocery list generated. ${missingCount} menu item${missingCount===1?" is":"s are"} missing recipes and are clearly marked.`:"Weekly grocery list generated.");
     }catch{setStatus("Could not generate the grocery list. Please try again.")}finally{setGroceryLoading(false)}
   }
