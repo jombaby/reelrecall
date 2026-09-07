@@ -215,33 +215,34 @@ function generateWeeklyItems(videos:Video[]){
 
 function groceryAisleFor(raw:string){
   const item=raw.toLowerCase();
-  if(/\b(chicken|beef|pork|turkey|lamb|steak|ground meat|sausage|bacon|shrimp|prawn|salmon|tuna|fish|crab|lobster)\b/.test(item))return"Meat & Seafood";
-  if(/\b(milk|cream|butter|cheese|yogurt|yoghurt|egg|eggs|paneer|sour cream|half and half)\b/.test(item))return"Dairy & Eggs";
-  if(/\b(onion|garlic|ginger|tomato|potato|carrot|celery|pepper|capsicum|spinach|lettuce|cabbage|cauliflower|broccoli|cilantro|coriander|parsley|mint|basil|lemon|lime|orange|apple|banana|mango|pineapple|avocado|cucumber|zucchini|mushroom|green bean|peas|corn|jalapeno|chili|chilli)\b/.test(item))return"Produce";
-  if(/\b(bread|bun|roll|tortilla|pita|naan|bagel|croissant)\b/.test(item))return"Bakery & Bread";
-  if(/\b(frozen|ice cream|frozen vegetables|frozen fruit)\b/.test(item))return"Frozen";
-  if(/\b(rice|pasta|noodle|spaghetti|macaroni|quinoa|oat|oats|couscous|barley|flour tortilla)\b/.test(item))return"Rice, Pasta & Grains";
-  if(/\b(cumin|turmeric|paprika|coriander powder|garam masala|curry powder|pepper powder|chili powder|chilli powder|cinnamon|cardamom|clove|nutmeg|oregano|thyme|rosemary|seasoning|salt)\b/.test(item))return"Spices & Seasonings";
-  if(/\b(oil|vinegar|soy sauce|hot sauce|ketchup|mustard|mayonnaise|mayo|sriracha|honey|maple syrup|sauce|paste|dressing)\b/.test(item))return"Sauces, Oils & Condiments";
-  if(/\b(baking soda|baking powder|yeast|vanilla|cocoa|chocolate|sugar|brown sugar|powdered sugar|cornstarch)\b/.test(item))return"Baking";
-  if(/\b(canned|can of|beans|chickpeas|lentils|coconut milk|tomato paste|tomato sauce|broth|stock)\b/.test(item))return"Canned & Jarred";
-  if(/\b(coffee|tea|juice|soda|sparkling water|coconut water|drink)\b/.test(item))return"Beverages";
+  if(/\b(black pepper|peppercorn|paprika|cumin|turmeric|cardamom|cinnamon|clove|nutmeg|garam masala|curry powder|chili powder|chilli powder|chili flakes|chilli flakes|onion powder|garlic powder|coriander powder|coriander seeds|asafoetida|hing|seasoning|oregano|thyme|rosemary|bay leaves|salt|saffron|sesame seeds|dried red chili|dry red chili)\b/.test(item))return"Spices & Seasonings";
+  if(/\b(oil|vinegar|soy sauce|hot sauce|ketchup|mustard|mayonnaise|mayo|sriracha|honey|maple syrup|sauce|paste|dressing|chutney)\b/.test(item))return"Sauces, Oils & Condiments";
+  if(/\b(coconut milk|broth|bouillon|stock|tomato paste|tomato sauce|canned|beans|chickpeas|lentils)\b/.test(item))return"Canned & Jarred";
+  if(/\b(milk|cream|butter|cheese|yogurt|yoghurt|egg|eggs|paneer|sour cream|half and half|feta|mozzarella|parmesan)\b/.test(item))return"Dairy & Eggs";
+  if(/\b(chicken|beef|pork|turkey|lamb|steak|sausage|bacon|shrimp|prawn|salmon|tuna|tilapia|fish|crab|lobster)\b/.test(item))return"Meat & Seafood";
+  if(/\b(onion|garlic|ginger|tomato|potato|carrot|celery|bell pepper|capsicum|spinach|lettuce|cabbage|cauliflower|broccoli|cilantro|coriander|parsley|mint|basil|lemon|lime|orange|apple|banana|mango|pineapple|avocado|cucumber|zucchini|mushroom|green bean|peas|corn|jalapeno|red chili|beet|watermelon|strawberr|blueberr|kiwi|asparagus|sweet potato|curry leaves)\b/.test(item))return"Produce";
+  if(/\b(bread|bun|roll|tortilla|pita|naan|bagel|croissant|tostada shell)\b/.test(item))return"Bakery & Bread";
+  if(/\b(rice|pasta|noodle|spaghetti|macaroni|quinoa|oat|oats|couscous|barley|rava|semolina)\b/.test(item))return"Rice, Pasta & Grains";
+  if(/\b(baking soda|baking powder|yeast|vanilla|cocoa|chocolate|sugar|brown sugar|powdered sugar|cornstarch|flour)\b/.test(item))return"Baking";
+  if(/\b(frozen|ice cream)\b/.test(item))return"Frozen";
+  if(/\b(coffee|tea|chai|juice|soda|sparkling water|coconut water|drink)\b/.test(item))return"Beverages";
   return"Pantry & Dry Goods";
 }
 function groupGrocerySummaryByAisle(summary:GrocerySummaryItem[]){
   const order=["Produce","Meat & Seafood","Dairy & Eggs","Bakery & Bread","Rice, Pasta & Grains","Canned & Jarred","Spices & Seasonings","Sauces, Oils & Condiments","Baking","Frozen","Beverages","Pantry & Dry Goods"];
   const groups=new Map<string,GrocerySummaryItem[]>();
   for(const item of summary){const aisle=groceryAisleFor(item.item);groups.set(aisle,[...(groups.get(aisle)??[]),item])}
-  return order.filter(aisle=>groups.has(aisle)).map(aisle=>({aisle,items:groups.get(aisle)??[]}));
+  return order.filter(aisle=>groups.has(aisle)).map(aisle=>({aisle,items:(groups.get(aisle)??[]).sort((a,b)=>a.item.localeCompare(b.item))}));
 }
 
-
 const GROCERY_UNICODE_FRACTIONS:Record<string,number>={"¼":.25,"½":.5,"¾":.75,"⅓":1/3,"⅔":2/3,"⅛":.125,"⅜":.375,"⅝":.625,"⅞":.875};
+const GROCERY_WORD_NUMBERS:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,half:.5};
 
 function groceryNumber(raw:string){
-  const value=raw.trim();
+  const value=raw.trim().toLowerCase();
   if(!value)return null;
   if(value in GROCERY_UNICODE_FRACTIONS)return GROCERY_UNICODE_FRACTIONS[value];
+  if(value in GROCERY_WORD_NUMBERS)return GROCERY_WORD_NUMBERS[value];
   const mixed=value.match(/^(\d+)\s+(\d+)\/(\d+)$/);
   if(mixed)return Number(mixed[1])+Number(mixed[2])/Number(mixed[3]);
   const fraction=value.match(/^(\d+)\/(\d+)$/);
@@ -250,42 +251,170 @@ function groceryNumber(raw:string){
   return Number.isFinite(parsed)?parsed:null;
 }
 function cleanGroceryQuantity(raw:string){
-  return raw.replace(/\s+/g," ").replace(/^[-–—,:;\s]+|[-–—,:;\s]+$/g,"").trim();
+  const cleaned=raw.replace(/\bas listed in recipes\b/gi,"").replace(/\b(?:exact\s+)?amount\s+not\s+specified\b/gi,"").replace(/\s+/g," ").replace(/^[-–—,:;\s]+|[-–—,:;\s]+$/g,"").trim();
+  if(!cleaned||/^(?:a little|a piece|a handful|handful|a pinch|a few|few|some|as needed|to taste)$/i.test(cleaned))return"";
+  return cleaned;
 }
-function splitGroceryItemQuantity(rawItem:string,explicitQuantity:string){
-  let item=rawItem.replace(/\s+/g," ").trim(),embedded="";
-  const num='(?:\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])';
-  const unit='(?:cups?|cup|tbsp|tablespoons?|tsp|teaspoons?|lbs?|pounds?|oz|ounces?|kgs?|kilograms?|grams?|g|ml|milliliters?|liters?|litres?|l|cloves?|cans?|packages?|packs?|pieces?|pcs?|bunches?|bunch)';
-  const leading=new RegExp(`^\\s*(${num})\\s*(${unit})?\\b\\s*(.+)$`,"i");
-  const trailing=new RegExp(`^(.+?)\\s*[-–—,:]?\\s+(${num})\\s*(${unit})?\\s*$`,"i");
-  const lead=item.match(leading),tail=item.match(trailing);
-  if(lead){embedded=cleanGroceryQuantity(`${lead[1]}${lead[2]?` ${lead[2]}`:""}`);item=lead[3].trim()}
-  else if(tail){item=tail[1].trim();embedded=cleanGroceryQuantity(`${tail[2]}${tail[3]?` ${tail[3]}`:""}`)}
-  return{item,quantity:cleanGroceryQuantity(explicitQuantity)||embedded};
+function groceryQuantityToken(raw:string){
+  const value=raw.trim().toLowerCase();
+  if(value in GROCERY_WORD_NUMBERS)return String(GROCERY_WORD_NUMBERS[value]);
+  return raw;
 }
-function canonicalGroceryItem(raw:string){
-  let item=raw.toLowerCase()
-    .replace(/[()]/g," ")
-    .replace(/\b(?:large|medium|small|extra large|xl|fresh|finely|roughly|thinly|thickly|chopped|diced|minced|sliced|grated|shredded|crushed|peeled|trimmed|divided|optional|to taste|for garnish|for serving)\b/g," ")
+function normalizeGroceryIngredientText(raw:string){
+  let value=raw
+    .replace(/\bas listed in recipes\b/gi,"")
+    .replace(/[•*]/g," ")
     .replace(/\s+/g," ")
     .trim();
+  const amountOf=value.match(/^amount\s+of\s+(.+?)\s+not\s+specified$/i);
+  if(amountOf)value=amountOf[1];
+  value=value
+    .replace(/\s*[-–—,:;]+\s*(?:otherwise\s+)?(?:exact\s+)?amount\s+not\s+specified.*$/i,"")
+    .replace(/\s*,?\s*(?:exact\s+)?amount\s+not\s+specified.*$/i,"")
+    .replace(/\s+/g," ")
+    .replace(/^[-–—,:;\s]+|[-–—,:;\s]+$/g,"")
+    .trim();
+  return value;
+}
+function expandCompoundGroceryIngredient(raw:string){
+  const value=normalizeGroceryIngredientText(raw);
+  if(!value)return[];
+  const juice=value.match(/^([^:]{2,80}\bjuice)\s*:\s*(.+)$/i);
+  if(juice&&juice[2].includes(","))return juice[2].split(",").map(item=>item.trim()).filter(Boolean);
+  if(/^salt\s+and\s+black\s+pepper\b/i.test(value))return["Salt","Black Pepper"];
+  if(/^ginger\s+and\s+garlic\b/i.test(value))return["Ginger","Garlic"];
+  return[value];
+}
+function splitGroceryItemQuantity(raw:string){
+  let item=normalizeGroceryIngredientText(raw),quantity="";
+  if(!item)return{item:"",quantity:""};
+
+  const juiceOf=item.match(/^juice\s+of\s+(\d+)\s+(.+)$/i);
+  if(juiceOf)return{item:juiceOf[2],quantity:juiceOf[1]};
+
+  const halfKg=item.match(/^half\s+(kg|kilogram|kilograms)\s+(.+)$/i);
+  if(halfKg)return{item:halfKg[2],quantity:"0.5 kg"};
+  const halfItem=item.match(/^half\s+(?:an?|one)\s+(.+)$/i);
+  if(halfItem)return{item:halfItem[1],quantity:"0.5"};
+
+  item=item
+    .replace(/^(?:a\s+little|a\s+piece\s+of|a\s+handful\s+of|handful\s+of|a\s+pinch\s+of|a\s+few|few)\s+/i,"")
+    .replace(/^(?:washed|ripe|seedless)\s+/i,"")
+    .trim();
+
+  const num='(?:\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]|one|two|three|four|five|six|seven|eight|nine|ten)';
+  const unit='(?:cups?|tbsp|tablespoons?|tbsps?|tsp|teaspoons?|lbs?|pounds?|oz|ounces?|kgs?|kilograms?|grams?|g|gms?|ml|milliliters?|liters?|litres?|l|cloves?|cans?|packages?|packs?|pieces?|pcs?|bunches?|bunch|sprigs?|cubes?|nos?|slices?)';
+  const leading=new RegExp(`^-?\\s*(${num})\\s*(${unit})?\\b\\s*(.+)$`,"i");
+  const trailing=new RegExp(`^(.+?)\\s*[-–—,:;]?\\s+(${num})\\s*(${unit})?\\s*$`,"i");
+  const lead=item.match(leading),tail=item.match(trailing);
+  if(lead){quantity=cleanGroceryQuantity(`${groceryQuantityToken(lead[1])}${lead[2]?` ${lead[2]}`:""}`);item=lead[3].trim()}
+  else if(tail){item=tail[1].trim();quantity=cleanGroceryQuantity(`${groceryQuantityToken(tail[2])}${tail[3]?` ${tail[3]}`:""}`)}
+
+  item=item
+    .replace(/\s*[-–—,:;]+\s*(?:a\s+little|a\s+handful|a\s+pinch|a\s+few(?:\s+slices?)?|few\s+slices?|some|as\s+needed|to\s+taste|two\s+cubes?)\s*$/i,"")
+    .replace(/^(?:tbsp|tablespoons?|tbsps?|tsp|teaspoons?|cups?|grams?|gms?)\s+/i,"")
+    .replace(/\s+/g," ")
+    .trim();
+  return{item,quantity};
+}
+function canonicalGroceryItem(raw:string){
+  let item=normalizeGroceryIngredientText(raw).toLowerCase();
+  if(!item)return"";
+
+  item=item
+    .replace(/,\s*(?:as\s+a\s+substitute\s+for|substitute\s+for|any\s+color|seeds?\s+removed|for\s+fluffier\s+texture).*$/i,"")
+    .replace(/\byou\s+can\s+also\s+mix\s+both\b.*$/i,"")
+    .replace(/\bwith\s+skin\b/g," ")
+    .replace(/\b(?:washed|fresh|finely|roughly|thinly|thickly|chopped|diced|minced|sliced|grated|shredded|crushed|peeled|trimmed|divided|optional|for garnish|for serving|ripe|seedless|soft|hot|crispy|cubed|soaked|cooked|frozen|roasted|extra|for topping)\b/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+
+  if(/^(?:water\b|hot water\b|glass of water\b)/.test(item))return"";
+  if(/^(?:foil|ingredient unclear|dry ingredients?|ice cream sticks?(?: or toothpicks)?|toothpicks?)$/.test(item))return"";
+  if(/^lemon rice$/.test(item))return"";
+
+  if(/^butter\s+or\s+olive\s+oil$/.test(item))return"Butter or Olive Oil";
+  if(/^basil\s+or\s+parsley$/.test(item))return"Basil or Parsley";
+  if(/^cheddar\s+or\s+mozzarella/.test(item))return"Cheddar or Mozzarella";
 
   if(/\beggs?\b/.test(item)&&!/(eggplant|egg noodle)/.test(item))return"Eggs";
   if(/\bchicken\s+breasts?\b/.test(item))return"Chicken Breast";
   if(/\bchicken\s+thighs?\b/.test(item))return"Chicken Thigh";
+  if(/\bchicken\s+leg\b/.test(item))return"Chicken Leg";
+  if(/\bchicken\b/.test(item)&&!/\b(?:broth|bouillon)\b/.test(item))return"Chicken";
+  if(/\b(?:shrimp|prawns?)\b/.test(item))return"Shrimp";
+  if(/\bground\s+beef\b/.test(item))return"Ground Beef";
+  if(/\bsirloin\s+steak\b|\bsteak\b/.test(item))return"Steak";
+
+  if(/^(?:baby\s+)?spinach$/.test(item))return"Spinach";
+  if(/^kale$/.test(item))return"Kale";
+  if(/^(?:cilantro|coriander)$/.test(item))return"Cilantro";
+  if(/^parsley$/.test(item))return"Parsley";
   if(/^garlic(?:\s+cloves?)?$/.test(item))return"Garlic";
+  if(/^(?:garlic\s+granules?|garlic\s+powder)$/.test(item))return"Garlic Powder";
+  if(/^(?:onion\s+granules?|onion\s+powder)$/.test(item))return"Onion Powder";
+  if(/^red\s+onions?$/.test(item))return"Red Onion";
   if(/^onions?$/.test(item))return"Onion";
+  if(/^cherry\s+tomatoes?$/.test(item))return"Cherry Tomatoes";
+  if(/^sun[- ]?dried\s+tomatoes?$/.test(item))return"Sun-Dried Tomatoes";
   if(/^tomatoes?$/.test(item))return"Tomato";
   if(/^potatoes?$/.test(item))return"Potato";
+  if(/^sweet\s+potatoes?$/.test(item))return"Sweet Potato";
   if(/^carrots?$/.test(item))return"Carrot";
-  if(/^(?:bell\s+)?peppers?$/.test(item))return item.startsWith("bell")?"Bell Pepper":"Pepper";
+  if(/^celery(?:\s+stalks?)?$/.test(item))return"Celery";
+  if(/^bell\s+peppers?$/.test(item))return"Bell Pepper";
+  if(/^(?:black\s+pepper(?:\s+powder|corns?)?|pepper\s+powder|pepper)$/.test(item))return"Black Pepper";
+  if(/^paprika(?:\s+powder)?$/.test(item))return"Paprika";
+  if(/^chilli\s+powder$|^chili\s+powder$/.test(item))return"Chili Powder";
+  if(/^chilli\s+flakes$|^chili\s+flakes$/.test(item))return"Chili Flakes";
+  if(/^dry\s+red\s+chill?i$|^dried\s+red\s+chill?i$/.test(item))return"Dried Red Chili";
+  if(/^red\s+chilli$|^red\s+chili$/.test(item))return"Red Chili";
+  if(/^cumin\s+powder$|^cumin$/.test(item))return"Cumin";
+  if(/^cumin\s+seeds?$/.test(item))return"Cumin Seeds";
+  if(/^turmeric(?:\s+powder)?$/.test(item))return"Turmeric";
+  if(/^cardamom(?:\s+powder)?$/.test(item))return"Cardamom";
+  if(/^(?:aromatic|coarse|red)?\s*salt(?:\s+ocr.*)?$/.test(item))return"Salt";
+
+  if(/^beetroot$|^beets?$/.test(item))return"Beets";
   if(/^lemons?$/.test(item))return"Lemon";
   if(/^limes?$/.test(item))return"Lime";
   if(/^avocados?$/.test(item))return"Avocado";
   if(/^cucumbers?$/.test(item))return"Cucumber";
   if(/^mushrooms?$/.test(item))return"Mushroom";
-  if(/^bananas?$/.test(item))return"Banana";
+  if(/^bananas?(?:\s+slices?)?$/.test(item))return"Banana";
+  if(/^green\s+apples?$/.test(item))return"Green Apple";
+  if(/^red\s+apples?$/.test(item))return"Red Apple";
   if(/^apples?$/.test(item))return"Apple";
+  if(/^pineapple$/.test(item))return"Pineapple";
+  if(/^strawberries$/.test(item))return"Strawberries";
+  if(/^blueberries(?:\s+for\s+topping)?$/.test(item))return"Blueberries";
+  if(/^kiwis?$/.test(item))return"Kiwi";
+  if(/^watermelon(?:\s+cubes?)?$/.test(item))return"Watermelon";
+
+  if(/^(?:thick\s+)?greek\s+yogurt$/.test(item))return"Greek Yogurt";
+  if(/^yogurt$/.test(item))return"Yogurt";
+  if(/^cottage\s+cheese$/.test(item))return"Cottage Cheese";
+  if(/^mozzarella(?:\s+cheese)?$/.test(item))return"Mozzarella";
+  if(/^parmesan(?:\s+cheese)?$/.test(item))return"Parmesan";
+  if(/^milk$/.test(item))return"Milk";
+  if(/^butter$/.test(item))return"Butter";
+  if(/^coconut\s+milk$/.test(item))return"Coconut Milk";
+
+  if(/^natural\s+honey$|^honey$/.test(item))return"Honey";
+  if(/^oil(?:\s+for\s+frying)?$/.test(item))return"Cooking Oil";
+  if(/^olive\s+oil$/.test(item))return"Olive Oil";
+  if(/^avocado\s+oil$/.test(item))return"Avocado Oil";
+  if(/^coconut\s+oil$/.test(item))return"Coconut Oil";
+  if(/^coconut\s+water(?:,.*)?$/.test(item))return"Coconut Water";
+
+  if(/^bread(?:,.*)?$/.test(item))return"Bread";
+  if(/^rolled\s+oats$|^oats$/.test(item))return"Oats";
+  if(/^(?:gms?\s+)?chickpeas?$/.test(item))return"Chickpeas";
+  if(/^asafoetida\s+hing$|^hing$/.test(item))return"Asafoetida (Hing)";
+  if(/^rava$/.test(item))return"Semolina (Rava)";
+  if(/^scoop\s+vanilla\s+protein$|^vanilla\s+protein$/.test(item))return"Vanilla Protein Powder";
+  if(/^white\s+sesame\s+seeds?$/.test(item))return"Sesame Seeds";
+  if(/^peanuts?$/.test(item))return"Peanuts";
 
   return item.split(" ").filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(" ")||raw.trim();
 }
@@ -300,54 +429,72 @@ function groceryMeasurement(raw:string){
   if(!unit)return{amount,kind:"count" as const,base:amount,label:""};
   if(/^(?:lb|lbs|pound|pounds)$/.test(unit))return{amount,kind:"weight" as const,base:amount*16,label:"oz"};
   if(/^(?:oz|ounce|ounces)$/.test(unit))return{amount,kind:"weight" as const,base:amount,label:"oz"};
+  if(/^(?:kg|kgs|kilogram|kilograms)$/.test(unit))return{amount,kind:"metric-weight" as const,base:amount*1000,label:"g"};
+  if(/^(?:g|gram|grams|gm|gms)$/.test(unit))return{amount,kind:"metric-weight" as const,base:amount,label:"g"};
   if(/^(?:cup|cups)$/.test(unit))return{amount,kind:"volume" as const,base:amount*48,label:"tsp"};
-  if(/^(?:tbsp|tablespoon|tablespoons)$/.test(unit))return{amount,kind:"volume" as const,base:amount*3,label:"tsp"};
+  if(/^(?:tbsp|tablespoon|tablespoons|tbsps)$/.test(unit))return{amount,kind:"volume" as const,base:amount*3,label:"tsp"};
   if(/^(?:tsp|teaspoon|teaspoons)$/.test(unit))return{amount,kind:"volume" as const,base:amount,label:"tsp"};
+  if(/^(?:no|nos|piece|pieces|pc|pcs|clove|cloves|sprig|sprigs|cube|cubes|slice|slices)$/.test(unit))return{amount,kind:"count" as const,base:amount,label:""};
   return{amount,kind:`unit:${unit}` as const,base:amount,label:unit};
 }
 function formatGroceryNumber(value:number){
   const rounded=Math.round(value*100)/100;
-  return Number.isInteger(rounded)?String(rounded):String(rounded).replace(/\.00$/,"" ).replace(/(\.\d*[1-9])0+$/,"$1");
+  return Number.isInteger(rounded)?String(rounded):String(rounded).replace(/\.00$/,"").replace(/(\.\d*[1-9])0+$/,"$1");
 }
 function mergeGroceryQuantities(values:string[]){
   const cleaned=values.map(cleanGroceryQuantity).filter(Boolean);
   if(!cleaned.length)return"";
   const parsed=cleaned.map(groceryMeasurement);
-  if(parsed.every(Boolean)){
-    const measurements=parsed.filter((item):item is NonNullable<ReturnType<typeof groceryMeasurement>>=>Boolean(item));
-    const kinds=[...new Set(measurements.map(item=>item.kind))];
-    if(kinds.length===1){
-      const kind=kinds[0],total=measurements.reduce((sum,item)=>sum+item.base,0);
-      if(kind==="count")return formatGroceryNumber(total);
-      if(kind==="weight"){
-        const pounds=Math.floor(total/16),ounces=Math.round((total-pounds*16)*100)/100;
-        return pounds&&ounces?`${pounds} lb ${formatGroceryNumber(ounces)} oz`:pounds?`${pounds} lb`:`${formatGroceryNumber(ounces)} oz`;
+  const valid=parsed.filter((item):item is NonNullable<ReturnType<typeof groceryMeasurement>>=>Boolean(item));
+  if(!valid.length)return"";
+  const kinds=[...new Set(valid.map(item=>item.kind))];
+  if(kinds.length===1){
+    const kind=kinds[0],total=valid.reduce((sum,item)=>sum+item.base,0);
+    if(kind==="count")return formatGroceryNumber(total);
+    if(kind==="weight"){
+      const pounds=Math.floor(total/16),ounces=Math.round((total-pounds*16)*100)/100;
+      return pounds&&ounces?`${pounds} lb ${formatGroceryNumber(ounces)} oz`:pounds?`${pounds} lb`:`${formatGroceryNumber(ounces)} oz`;
+    }
+    if(kind==="metric-weight")return total>=1000?`${formatGroceryNumber(total/1000)} kg`:`${formatGroceryNumber(total)} g`;
+    if(kind==="volume"){
+      const cups=Math.floor(total/48),afterCups=total-cups*48,tbsp=Math.floor(afterCups/3),tsp=Math.round((afterCups-tbsp*3)*100)/100;
+      return[cups?`${cups} cup${cups===1?"":"s"}`:"",tbsp?`${tbsp} tbsp`:"",tsp?`${formatGroceryNumber(tsp)} tsp`:""].filter(Boolean).join(" ");
+    }
+    return`${formatGroceryNumber(total)} ${valid[0].label}`.trim();
+  }
+  const byKind=new Map<string,NonNullable<ReturnType<typeof groceryMeasurement>>[]>();
+  for(const measurement of valid)byKind.set(measurement.kind,[...(byKind.get(measurement.kind)??[]),measurement]);
+  return[...byKind.values()].map(group=>{
+    const sample=group[0],total=group.reduce((sum,item)=>sum+item.base,0);
+    if(sample.kind==="count")return formatGroceryNumber(total);
+    if(sample.kind==="weight"){const pounds=Math.floor(total/16),ounces=Math.round((total-pounds*16)*100)/100;return pounds&&ounces?`${pounds} lb ${formatGroceryNumber(ounces)} oz`:pounds?`${pounds} lb`:`${formatGroceryNumber(ounces)} oz`}
+    if(sample.kind==="metric-weight")return total>=1000?`${formatGroceryNumber(total/1000)} kg`:`${formatGroceryNumber(total)} g`;
+    if(sample.kind==="volume"){const cups=Math.floor(total/48),afterCups=total-cups*48,tbsp=Math.floor(afterCups/3),tsp=Math.round((afterCups-tbsp*3)*100)/100;return[cups?`${cups} cup${cups===1?"":"s"}`:"",tbsp?`${tbsp} tbsp`:"",tsp?`${formatGroceryNumber(tsp)} tsp`:""].filter(Boolean).join(" ")}
+    return`${formatGroceryNumber(total)} ${sample.label}`.trim();
+  }).join(" + ");
+}
+function buildLocalGrocerySummary(menuItems:GroceryListMenuItem[]){
+  const groups=new Map<string,{item:string;quantities:string[];usedBy:Set<string>}>();
+  for(const menuItem of menuItems){
+    if(menuItem.recipeMissing)continue;
+    const usedBy=`${menuItem.schedule} — ${menuItem.title}`;
+    for(const rawIngredient of menuItem.ingredients){
+      for(const expanded of expandCompoundGroceryIngredient(rawIngredient)){
+        const split=splitGroceryItemQuantity(expanded);
+        const canonical=canonicalGroceryItem(split.item);
+        if(!canonical)continue;
+        const key=canonical.toLowerCase();
+        const current=groups.get(key)??{item:canonical,quantities:[],usedBy:new Set<string>()};
+        if(split.quantity)current.quantities.push(split.quantity);
+        current.usedBy.add(usedBy);
+        groups.set(key,current);
       }
-      if(kind==="volume"){
-        const cups=Math.floor(total/48),afterCups=total-cups*48,tbsp=Math.floor(afterCups/3),tsp=Math.round((afterCups-tbsp*3)*100)/100;
-        return [cups?`${cups} cup${cups===1?"":"s"}`:"",tbsp?`${tbsp} tbsp`:"",tsp?`${formatGroceryNumber(tsp)} tsp`:""].filter(Boolean).join(" ");
-      }
-      return `${formatGroceryNumber(total)} ${measurements[0].label}`.trim();
     }
   }
-  return [...new Set(cleaned.map(value=>value.toLowerCase()))].map(value=>cleaned.find(item=>item.toLowerCase()===value)??value).join(" + ");
-}
-function consolidateGrocerySummary(summary:GrocerySummaryItem[]){
-  const groups=new Map<string,{item:string;quantities:string[];usedBy:Set<string>}>();
-  for(const row of summary){
-    const split=splitGroceryItemQuantity(row.item,row.quantity||"");
-    const canonical=canonicalGroceryItem(split.item);
-    const key=canonical.toLowerCase();
-    const current=groups.get(key)??{item:canonical,quantities:[],usedBy:new Set<string>()};
-    if(split.quantity)current.quantities.push(split.quantity);
-    for(const use of row.usedBy??[])if(use)current.usedBy.add(use);
-    groups.set(key,current);
-  }
-  return [...groups.values()]
+  return[...groups.values()]
     .map(group=>({item:group.item,quantity:mergeGroceryQuantities(group.quantities),usedBy:[...group.usedBy]}))
     .sort((a,b)=>a.item.localeCompare(b.item));
 }
-
 
 function WeeklyMenuThumb({item}:{item:WeeklyMenuItem}){
   const[thumbnail,setThumbnail]=useState<string|null>(null),[failed,setFailed]=useState(false);
@@ -584,14 +731,8 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
         const video=videos.find(v=>v.id===item.videoId),recipe=video?.recipe??null;
         return{schedule:`${item.day} · ${item.slot}`,videoId:item.videoId,title:recipe?.title||video?.title||item.title,ingredients:recipe?.ingredients??[],recipeMissing:!recipe};
       });
-      const knownItems=menuItems.filter(item=>!item.recipeMissing&&item.ingredients.length);
-      let summary:GrocerySummaryItem[]=[],generatedAt=new Date().toISOString();
-      if(knownItems.length){
-        const response=await fetch("/api/grocery-list",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({menuItems:knownItems.map(({schedule,videoId,title,ingredients})=>({schedule,videoId,title,ingredients}))})});
-        if(!response.ok)throw new Error();
-        const result=await response.json() as {summary?:GrocerySummaryItem[];generatedAt?:string};
-        summary=consolidateGrocerySummary(Array.isArray(result.summary)?result.summary:[]);generatedAt=result.generatedAt||generatedAt;
-      }
+      const summary=buildLocalGrocerySummary(menuItems);
+      const generatedAt=new Date().toISOString();
       const missingCount=menuItems.filter(item=>item.recipeMissing).length;
       setGroceryList({menuItems,summary,aisleGroups:groupGrocerySummaryByAisle(summary),generatedAt});
       setStatus(missingCount?`Grocery list generated. ${missingCount} menu item${missingCount===1?" is":"s are"} missing recipes and are clearly marked.`:"Weekly grocery list generated.");
