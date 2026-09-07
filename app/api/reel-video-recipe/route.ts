@@ -496,6 +496,32 @@ async function instagramEvidence(video:VideoInput){
 }
 
 // REELRECALL_FACEBOOK_MP4_HANDOFF_FIX_V14
+
+async function transcribeFacebookMediaWithOpenAI(mediaUrl:string){
+  const apiKey=process.env.OPENAI_API_KEY;
+  if(!apiKey||!mediaUrl)return"";
+  try{
+    const mediaResponse=await fetch(mediaUrl,{cache:"no-store",redirect:"follow",signal:AbortSignal.timeout(45000),headers:{"User-Agent":"Mozilla/5.0 ReelRecall/2.0","Accept":"video/mp4,audio/*;q=0.9,*/*;q=0.5"}});
+    if(!mediaResponse.ok){console.warn("[facebook-direct-audio]",`Could not download Facebook media (${mediaResponse.status})`);return""}
+    const declaredSize=Number(mediaResponse.headers.get("content-length")||0);
+    const maxBytes=24*1024*1024;
+    if(declaredSize&&declaredSize>maxBytes){console.warn("[facebook-direct-audio]",`Skipping transcription because media is ${Math.round(declaredSize/1024/1024)} MB`);return""}
+    const mediaBytes=await mediaResponse.arrayBuffer();
+    if(!mediaBytes.byteLength||mediaBytes.byteLength>maxBytes){console.warn("[facebook-direct-audio]",`Skipping transcription because downloaded media is ${Math.round(mediaBytes.byteLength/1024/1024)} MB`);return""}
+    const contentType=((mediaResponse.headers.get("content-type")||"video/mp4").split(";")[0].trim())||"video/mp4";
+    const extension=contentType.includes("webm")?"webm":contentType.includes("mpeg")||contentType.includes("mp3")?"mp3":contentType.includes("wav")?"wav":contentType.includes("m4a")?"m4a":"mp4";
+    const form=new FormData();
+    form.append("model","gpt-4o-transcribe");
+    form.append("file",new Blob([mediaBytes],{type:contentType}),`facebook-audio.${extension}`);
+    const transcriptionResponse=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`},body:form,signal:AbortSignal.timeout(90000)});
+    if(!transcriptionResponse.ok){const detail=(await transcriptionResponse.text()).slice(0,300);console.warn("[facebook-direct-audio]",`OpenAI transcription failed (${transcriptionResponse.status})${detail?` - ${detail}`:""}`);return""}
+    const result=await transcriptionResponse.json() as {text?:string};
+    const transcript=typeof result.text==="string"?result.text.trim():"";
+    if(transcript)console.log("[facebook-direct-audio]",`Captured ${transcript.length} transcript characters from the direct Facebook media`);
+    return transcript;
+  }catch(error){console.warn("[facebook-direct-audio]",error instanceof Error?error.message:"direct audio transcription failed");return""}
+}
+
 async function facebookEvidence(video:VideoInput){
   const resolvedFacebookUrl=await resolveFacebookCanonicalUrl(video.url);
   video={...video,url:resolvedFacebookUrl};
@@ -619,6 +645,11 @@ async function facebookEvidence(video:VideoInput){
           : `${transcriptActor}: failed`
       );
     }
+  }
+
+  // Fallback: if Facebook exposed a direct MP4 but no transcript, transcribe the media ourselves.
+  if(!transcript&&directVideoUrl){
+    transcript=await transcribeFacebookMediaWithOpenAI(directVideoUrl);
   }
 
   const standardFrames=directVideoUrl
