@@ -302,7 +302,8 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
         let ok=false,error="";
 
         try{
-          const response=await fetch("/api/reel-video-recipe",{
+          const endpoint=video.source==="YouTube"?"/api/recipe":"/api/reel-video-recipe";
+          const response=await fetch(endpoint,{
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes,source:video.source}})
@@ -311,14 +312,18 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
           const result=await response.json() as {
             analysis?:{message?:string;error?:string};
             recipe?:Recipe|null;
-            error?:string
+            error?:string;
+            message?:string;
+            descriptionFound?:boolean
           };
 
           if(result.recipe){
             if(runId===batchRunIdRef.current)onRecipeSaved(video.id,result.recipe);
             ok=true;
+          }else if(video.source==="YouTube"){
+            error=result.error||result.message||(result.descriptionFound?"The YouTube Short description did not contain enough structured recipe detail.":"No usable recipe was available in the YouTube Short description.");
           }else{
-            error=result.analysis?.error||result.error||result.analysis?.message||`No reliable recipe was generated (HTTP ${response.status}).`;
+            error=result.analysis?.error||result.error||result.analysis?.message||result.message||`No reliable recipe was generated (HTTP ${response.status}).`;
           }
         }catch(err){
           error=err instanceof Error?err.message:"Analysis request failed";
@@ -352,10 +357,11 @@ function WeeklyMenuPlanner({videos,onClose,onRecipeSaved,onOpenRecipe}:{videos:V
     const video=videos.find(item=>item.id===videoId);if(!video||singleRetryId||batch.running)return;
     setSingleRetryId(video.id);setStatus(`Retrying recipe analysis for ${video.title}… This retry will stop automatically after 75 seconds.`);
     try{
-      const response=await fetchWithWeeklyRetryTimeout("/api/reel-video-recipe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes,source:video.source}})});
-      const result=await response.json() as {analysis?:{message?:string;error?:string};recipe?:Recipe|null;error?:string};
+      const endpoint=video.source==="YouTube"?"/api/recipe":"/api/reel-video-recipe";
+      const response=await fetchWithWeeklyRetryTimeout(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes,source:video.source}})});
+      const result=await response.json() as {analysis?:{message?:string;error?:string};recipe?:Recipe|null;error?:string;message?:string;descriptionFound?:boolean};
       if(result.recipe){onRecipeSaved(video.id,result.recipe);setBatch(current=>({...current,success:current.success+1,failed:Math.max(0,current.failed-(current.failures.some(item=>item.videoId===video.id)?1:0)),failures:current.failures.filter(item=>item.videoId!==video.id)}));setStatus(`Recipe added for ${video.title}.`)}
-      else{const error=result.analysis?.error||result.error||result.analysis?.message||`No reliable recipe was generated (HTTP ${response.status}).`;setBatch(current=>({...current,failures:current.failures.some(item=>item.videoId===video.id)?current.failures.map(item=>item.videoId===video.id?{...item,error}:item):[...current.failures,{videoId:video.id,title:video.title,error}]}));setStatus(`AI still could not build a recipe for ${video.title}. You can add it manually.`)}
+      else{const error=video.source==="YouTube"?(result.error||result.message||(result.descriptionFound?"The YouTube Short description did not contain enough structured recipe detail.":"No usable recipe was available in the YouTube Short description.")):(result.analysis?.error||result.error||result.analysis?.message||result.message||`No reliable recipe was generated (HTTP ${response.status}).`);setBatch(current=>({...current,failures:current.failures.some(item=>item.videoId===video.id)?current.failures.map(item=>item.videoId===video.id?{...item,error}:item):[...current.failures,{videoId:video.id,title:video.title,error}]}));setStatus(video.source==="YouTube"?`YouTube description did not produce a complete recipe for ${video.title}. You can add it manually.`:`AI still could not build a recipe for ${video.title}. You can add it manually.`)}
     }catch(err){const timedOut=err instanceof DOMException&&err.name==="AbortError";
       const error=timedOut
         ?"Retry timed out after 75 seconds. The reel service did not return quickly enough."
@@ -486,9 +492,52 @@ export default function Home(){
   function beginRecipeEdit(video:Video){if(!video.recipe)return;setRecipeDraft({title:video.recipe.title,servings:video.recipe.servings,prepTime:video.recipe.prepTime,ingredients:video.recipe.ingredients.join("\n"),steps:video.recipe.steps.join("\n"),notes:video.recipe.notes});setRecipeEditing(true)}
   function saveRecipeEdits(video:Video){if(!video.recipe||!recipeDraft)return;const ingredients=recipeDraft.ingredients.split("\n").map(item=>item.trim()).filter(Boolean),steps=recipeDraft.steps.split("\n").map(item=>item.trim()).filter(Boolean);if(!ingredients.length||!steps.length){setToast("Recipe needs at least one ingredient and one step");return}const updated:Recipe={...video.recipe,source:"manual",title:recipeDraft.title.trim()||video.title,servings:recipeDraft.servings.trim(),prepTime:recipeDraft.prepTime.trim(),ingredients,steps,notes:recipeDraft.notes.trim()};setVideos(current=>current.map(item=>item.id===video.id?applyRecipeCandidate(item,updated,"manual",true):item));setRecipeEditing(false);setRecipeDraft(null);setToast("Recipe changes saved")}
   async function copyRecipe(video:Video){const text=recipeText(video);if(!text)return;try{await navigator.clipboard.writeText(text);setToast("Recipe copied")}catch{setToast("Could not copy recipe")}}
-  async function analyzeReelVideo(video:Video){if(video.source!=="Facebook"&&video.source!=="Instagram"){setToast("Direct AI video analysis currently supports Facebook and Instagram reels");return}setVideoAnalysisId(video.id);setVideoAnalysisBusy(true);setVideoAnalysisStage("Retrieving public reel…");setVideoAnalysisResult(null);setVideoAnalysisOpen(true);try{const response=await fetch("/api/reel-video-recipe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes,source:video.source}})});let result:{analysis?:{status?:"success"|"partial"|"error";source?:Source;caption?:string;transcript?:string;onScreenText?:string;thumbnail?:string;evidence?:string[];retrievedAt?:string;message?:string;error?:string;diagnostics?:AnalysisDiagnostics};recipe?:Recipe|null;message?:string;error?:string};
+  async function analyzeReelVideo(video:Video){
+    if(video.source==="YouTube"){
+      setVideoAnalysisId(video.id);
+      setVideoAnalysisBusy(true);
+      setVideoAnalysisStage("Reading YouTube Short description…");
+      setVideoAnalysisResult(null);
+      setVideoAnalysisOpen(true);
+      try{
+        const response=await fetch("/api/recipe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes}})});
+        let result:{recipe?:Recipe|null;message?:string;error?:string;descriptionFound?:boolean};
+        try{result=await response.json()}catch{result={error:`Recipe service returned HTTP ${response.status}`}}
+        const recipe=result.recipe??null;
+        const status:ReelAnalysisResult["status"]=recipe?"success":response.ok?"partial":"error";
+        setVideoAnalysisResult({
+          videoId:video.id,
+          status,
+          source:"YouTube",
+          caption:"",
+          transcript:"",
+          onScreenText:"",
+          thumbnail:"",
+          evidence:recipe?["YouTube Short description"]:[],
+          recipe,
+          message:recipe?"Recipe found in the YouTube Short description. Review it before saving.":result.message??(result.descriptionFound?"The YouTube Short description was found, but it did not contain enough structured recipe detail.":"No usable recipe was available in the YouTube Short description."),
+          error:result.error??(!response.ok?`YouTube description analysis failed with HTTP ${response.status}`:""),
+          retrievedAt:new Date().toISOString(),
+          diagnostics:null
+        });
+        setVideoAnalysisStage(recipe?"Description analysis complete":"Description analysis completed with limited results");
+      }catch(error){
+        setVideoAnalysisResult({videoId:video.id,status:"error",source:"YouTube",caption:"",transcript:"",onScreenText:"",thumbnail:"",evidence:[],recipe:null,message:"ReelRecall could not analyze the YouTube Short description.",error:error instanceof Error?error.message:"YouTube recipe analysis failed",retrievedAt:new Date().toISOString(),diagnostics:null});
+        setVideoAnalysisStage("Description analysis failed");
+      }finally{
+        setVideoAnalysisBusy(false);
+      }
+      return;
+    }
+
+    if(video.source!=="Facebook"&&video.source!=="Instagram"){
+      setToast("Direct analysis currently supports Facebook, Instagram, and YouTube Shorts");
+      return;
+    }
+    setVideoAnalysisId(video.id);setVideoAnalysisBusy(true);setVideoAnalysisStage("Retrieving public reel…");setVideoAnalysisResult(null);setVideoAnalysisOpen(true);try{const response=await fetch("/api/reel-video-recipe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({video:{url:video.url,title:video.title,notes:video.notes,source:video.source}})});let result:{analysis?:{status?:"success"|"partial"|"error";source?:Source;caption?:string;transcript?:string;onScreenText?:string;thumbnail?:string;evidence?:string[];retrievedAt?:string;message?:string;error?:string;diagnostics?:AnalysisDiagnostics};recipe?:Recipe|null;message?:string;error?:string};
 try{result=await response.json()}catch{result={error:`Analysis service returned HTTP ${response.status}`}}const analysis=result.analysis;const status:ReelAnalysisResult["status"]=analysis?.status??(response.ok?(result.recipe?"success":"partial"):"error");setVideoAnalysisResult({videoId:video.id,status,source:(analysis?.source??video.source) as Source,caption:analysis?.caption??"",transcript:analysis?.transcript??"",onScreenText:analysis?.onScreenText??"",thumbnail:analysis?.thumbnail??"",evidence:analysis?.evidence??result.recipe?.evidence??[],recipe:result.recipe??null,message:analysis?.message??result.message??(result.recipe?"Analysis completed. Review the proposed recipe before saving.":"Analysis completed without a recipe."),error:analysis?.error??result.error??(!response.ok?`Analysis failed with HTTP ${response.status}`:""),retrievedAt:analysis?.retrievedAt??new Date().toISOString(),diagnostics:analysis?.diagnostics??null});setVideoAnalysisStage(status==="success"?"Analysis complete":status==="partial"?"Analysis completed with limited results":"Analysis failed")}catch(error){setVideoAnalysisResult({videoId:video.id,status:"error",source:video.source,caption:"",transcript:"",onScreenText:"",thumbnail:"",evidence:[],recipe:null,message:"ReelRecall could not complete this analysis.",error:error instanceof Error?error.message:"Reel analysis failed",retrievedAt:new Date().toISOString(),diagnostics:null});setVideoAnalysisStage("Analysis failed")}finally{setVideoAnalysisBusy(false)}}
-  function saveAnalyzedRecipe(){const result=videoAnalysisResult;if(!result?.recipe)return;setVideos(current=>current.map(item=>item.id===result.videoId?applyRecipeCandidate(item,result.recipe as Recipe,"video",false):item));setVideoAnalysisOpen(false);setRecipeVideoId(result.videoId);setToast("Recipe saved")}
+
+  function saveAnalyzedRecipe(){const result=videoAnalysisResult;if(!result?.recipe)return;const origin=result.recipe.source==="description"?"description":"video";setVideos(current=>current.map(item=>item.id===result.videoId?applyRecipeCandidate(item,result.recipe as Recipe,origin,false):item));setVideoAnalysisOpen(false);setRecipeVideoId(result.videoId);setToast("Recipe saved")}
   function retryVideoAnalysis(){const video=videoAnalysisId?videos.find((v:Video)=>v.id===videoAnalysisId):null;if(video)void analyzeReelVideo(video)}
   function restoreRecipeVersion(videoId:string,index:number){
     setVideos(current=>current.map(video=>{
